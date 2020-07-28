@@ -56,10 +56,10 @@ class RoomGridLevel(RoomGrid):
         # If we've successfully completed the mission
         status = self.instrs.verify(action)
 
-        if status is 'success':
+        if status == 'success':
             done = True
             reward = self._reward()
-        elif status is 'failure':
+        elif status == 'failure':
             done = True
             reward = 0
 
@@ -92,7 +92,7 @@ class RoomGridLevel(RoomGrid):
                 continue
 
             except RejectSampling as error:
-                #print('Sampling rejected:', error)
+                # print('Sampling rejected:', error)
                 continue
 
             break
@@ -131,7 +131,7 @@ class RoomGridLevel(RoomGrid):
             move = instr.desc_move
             fixed = instr.desc_fixed
             if len(move.obj_set) == 1 and len(fixed.obj_set) == 1:
-                if move.obj_set[0] is fixed.obj_set[0]:
+                if move.obj_set[0] == fixed.obj_set[0]:
                     raise RejectSampling('cannot move an object next to itself')
 
         if isinstance(instr, ActionInstr):
@@ -227,7 +227,7 @@ class RoomGridLevel(RoomGrid):
 
             # If there is something other than a door in this cell, it
             # blocks reachability
-            if cell and cell.type is not 'door':
+            if cell and cell.type != 'door':
                 continue
 
             # Visit the horizontal and vertical neighbors
@@ -241,7 +241,7 @@ class RoomGridLevel(RoomGrid):
             for j in range(self.grid.height):
                 cell = self.grid.get(i, j)
 
-                if not cell or cell.type is 'wall':
+                if not cell or cell.type == 'wall':
                     continue
 
                 if (i, j) not in reachable:
@@ -303,7 +303,7 @@ class LevelGen(RoomGridLevel):
             self.place_agent()
             start_room = self.room_from_pos(*self.agent_pos)
             # Ensure that we are not placing the agent in the locked room
-            if start_room is self.locked_room:
+            if start_room == self.locked_room:
                 continue
             break
 
@@ -345,7 +345,7 @@ class LevelGen(RoomGridLevel):
             j = self._rand_int(0, self.num_rows)
             key_room = self.get_room(i, j)
 
-            if key_room is self.locked_room:
+            if key_room == self.locked_room:
                 continue
 
             self.add_object(i, j, 'key', door.color)
@@ -406,24 +406,23 @@ class LevelGen(RoomGridLevel):
 
         kind = self._rand_elem(instr_kinds)
 
-        if kind is 'action':
+        if kind == 'action':
             action = self._rand_elem(action_kinds)
 
-            if action is 'goto':
+            if action == 'goto':
                 return GoToInstr(self.rand_obj())
-            elif action is 'pickup':
+            elif action == 'pickup':
                 return PickupInstr(self.rand_obj(types=OBJ_TYPES_NOT_DOOR))
-            elif action is 'open':
+            elif action == 'open':
                 return OpenInstr(self.rand_obj(types=['door']))
-            elif action is 'putnext':
+            elif action == 'putnext':
                 return PutNextInstr(
                     self.rand_obj(types=OBJ_TYPES_NOT_DOOR),
                     self.rand_obj()
                 )
-
             assert False
 
-        elif kind is 'and':
+        elif kind == 'and':
             instr_a = self.rand_instr(
                 action_kinds=action_kinds,
                 instr_kinds=['action'],
@@ -436,7 +435,7 @@ class LevelGen(RoomGridLevel):
             )
             return AndInstr(instr_a, instr_b)
 
-        elif kind is 'seq':
+        elif kind == 'seq':
             instr_a = self.rand_instr(
                 action_kinds=action_kinds,
                 instr_kinds=['action', 'and'],
@@ -450,12 +449,12 @@ class LevelGen(RoomGridLevel):
 
             kind = self._rand_elem(['before', 'after'])
 
-            if kind is 'before':
+            if kind == 'before':
                 return BeforeInstr(instr_a, instr_b)
-            elif kind is 'after':
+            elif kind == 'after':
                 return AfterInstr(instr_a, instr_b)
-
-            assert False
+            else:
+                assert False
 
         assert False
 
