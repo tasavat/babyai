@@ -1,4 +1,5 @@
 import random
+import string
 from collections import OrderedDict
 from copy import deepcopy
 import gym
@@ -32,11 +33,17 @@ class RoomGridLevel(RoomGrid):
             **kwargs
         )
 
+        self.id = self.generate_unique_id()
+
     def reset(self, **kwargs):
         obs = super().reset(**kwargs)
 
         # Recreate the verifier
         self.instrs.reset_verifier(self)
+
+        # Reset id
+        self.id = self.generate_unique_id()
+        obs['id'] = self.id
 
         # Compute the time step limit based on the maze size and instructions
         nav_time_room = self.room_size ** 2
@@ -48,6 +55,7 @@ class RoomGridLevel(RoomGrid):
 
     def step(self, action):
         obs, reward, done, info = super().step(action)
+        obs['id'] = id
 
         # If we drop an object, we need to update its position in the environment
         if action == self.actions.drop:
@@ -137,7 +145,7 @@ class RoomGridLevel(RoomGrid):
         if isinstance(instr, ActionInstr):
             if not hasattr(self, 'unblocking') or not self.unblocking:
                 return
-            # TODO: either relax this a bit or make the bot handle this super corner-y scenarios
+            # TO_DO: either relax this a bit or make the bot handle this super corner-y scenarios
             # Check that the instruction doesn't involve a key that matches the color of a locked door
             potential_objects = ('desc', 'desc_move', 'desc_fixed')
             for attr in potential_objects:
@@ -251,6 +259,12 @@ class RoomGridLevel(RoomGrid):
 
         # All objects reachable
         return True
+
+    @staticmethod
+    def generate_unique_id(length=16):
+        letters_and_digits = string.ascii_letters + string.digits
+        result_str = ''.join((random.choice(letters_and_digits) for _ in range(length)))
+        return result_str
 
 
 class LevelGen(RoomGridLevel):

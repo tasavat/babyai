@@ -5,11 +5,38 @@ import re
 import torch
 import babyai.rl
 
+import gym
+import babyai
+
+from collections import deque
+from json import JSONEncoder
 from .. import utils
 
 
 def get_vocab_path(model_name):
     return os.path.join(utils.get_model_dir(model_name), "vocab.json")
+
+
+def get_simulated_env(model_name):
+    env_name = model_name.split("_")[0]
+    env = gym.make(env_name)
+    return env
+
+
+def get_pretrained_agent(model_name):
+    env_name = model_name.split("_")[0]
+    pretrained_model_name = env_name + "_pretrained"
+    model = utils.load_model(pretrained_model_name, raise_not_found=True)
+    if not model:
+        raise FileNotFoundError(f"Model not found: {pretrained_model_name}")
+    return model
+
+
+def get_preprocessed_obs(model_name, obs_space):
+    env_name = model_name.split("_")[0]
+    pretrained_model_name = env_name + "_pretrained"
+    obss_preprocessor = utils.ObssPreprocessor(pretrained_model_name, obs_space)
+    return obss_preprocessor
 
 
 class Vocabulary:
@@ -39,6 +66,27 @@ class Vocabulary:
         Copy the vocabulary of another Vocabulary object to the current object.
         '''
         self.vocab.update(other.vocab)
+
+
+class ImageInstructionDict:
+    def __init__(self):
+        self.max_size = 256
+        self.id_cache = deque(maxlen=self.max_size)
+        self.img_instr = {}  # reset id cache every time training restarts
+
+    def __getitem__(self, id):
+        if id in self.img_instr.keys():
+            return self.img_instr[id]
+        return None
+
+    def __setitem__(self, id, img_list):
+        self.id_cache.append(id)
+        self.img_instr[id] = img_list
+        # remove old ids
+        while len(self.id_cache) > self.max_size:
+            remove_id = self.id_cache.popleft()
+            if remove_id in self.img_instr.keys():
+                self.img_instr.remove(remove_id)
 
 
 class InstructionsPreprocessor(object):
@@ -73,6 +121,70 @@ class InstructionsPreprocessor(object):
 
         instrs = torch.tensor(instrs, device=device, dtype=torch.long)
         return instrs
+
+
+class ImgInstrPreprocessor(object):
+    def __init__(self, model_name, obs_space=None):
+        self.img_instr_dict = ImageInstructionDict()
+        self.simulated_env = get_simulated_env(model_name)
+        self.simulated_obs = None
+        self.obss_preprocessor = get_preprocessed_obs(model_name, obs_space)
+        self.pretrained_agent = get_pretrained_agent(model_name)
+        self.pretrained_agent.eval()
+
+    def __call__(self, obss, device=None):
+        img_instrs = []
+        for obs in obss:
+            # retrieve image instruction from cache by env id
+            img_instr = self.img_instr_dict[obs['id']]
+            # generate new image instruction with pretrained agent
+            if not img_instr:
+                img_instr = self._generate_img_instr(obs, device=device)
+                self.img_instr_dict[obs['id']] = img_instr
+            img_instrs.append(img_instr)
+
+        img_instrs = torch.tensor(img_instrs, device=device, dtype=torch.float)
+        return img_instrs
+
+    def _generate_img_instr(self, obs, device=None):
+        # retrieve mission
+        mission = obs["mission"]
+
+        # regenerate env + play until success (reward > 0)
+        success = False
+        while not success:
+            # generate new env until both missions match
+            while True:
+                self.simulated_obs = self.simulated_env.reset()
+                if self.simulated_obs['mission'] == mission:
+                    img_instrs = [self.simulated_obs['image']]  # first observation
+                    break
+
+            # simulate until done
+            memory = torch.zeros(1, self.pretrained_agent.memory_size, device=device)
+            mask = torch.ones(1, device=device)
+            done = False
+            while not done:
+                preprocessed_obs = self.obss_preprocessor([self.simulated_obs], device=device)
+                with torch.no_grad():
+                    model_results = self.pretrained_agent(preprocessed_obs, memory * mask.unsqueeze(1))
+                    dist = model_results['dist']
+                    value = model_results['value']
+                    memory_ = model_results['memory']
+                    extra_predictions = model_results['extra_predictions']
+                action = dist.sample()
+                obs, reward, done, env_info = self.simulated_env.step(action.cpu().numpy())
+
+                self.simulated_obs = obs
+                memory = memory_
+                mask = 1 - torch.tensor(done, device=device, dtype=torch.float)
+                mask = torch.reshape(mask, (1,))
+
+                if done and reward > 0:
+                    success = True
+                    img_instrs.append(self.simulated_obs['image'])  # finished observation
+
+        return img_instrs
 
 
 class RawImagePreprocessor(object):
@@ -129,6 +241,27 @@ class IntObssPreprocessor(object):
         self.obs_space = {
             "image": self.image_preproc.max_size,
             "instr": self.vocab.max_size
+        }
+
+    def __call__(self, obss, device=None):
+        obs_ = babyai.rl.DictList()
+
+        if "image" in self.obs_space.keys():
+            obs_.image = self.image_preproc(obss, device=device)
+
+        if "instr" in self.obs_space.keys():
+            obs_.instr = self.instr_preproc(obss, device=device)
+
+        return obs_
+
+
+class ImgInstrObssPreprocessor(object):
+    def __init__(self, model_name, obs_space=None, load_vocab_from=None):
+        self.image_preproc = RawImagePreprocessor()
+        self.instr_preproc = ImgInstrPreprocessor(model_name, obs_space)
+        self.obs_space = {
+            "image": 147,
+            "instr": 147,
         }
 
     def __call__(self, obss, device=None):

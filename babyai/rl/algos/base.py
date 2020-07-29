@@ -47,7 +47,6 @@ class BaseAlgo(ABC):
         aux_info : list
             a list of strings corresponding to the name of the extra information
             retrieved from the environment for supervised auxiliary losses
-
         """
         # Store parameters
 

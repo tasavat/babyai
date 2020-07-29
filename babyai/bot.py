@@ -172,7 +172,7 @@ class OpenSubgoal(Subgoal):
         assert self.fwd_cell.type == 'door', 'Forward cell has to be a door'
 
         # If the door is locked, go find the key and then return
-        # TODO: do we really need to be in front of the locked door
+        # TO_DO: do we really need to be in front of the locked door
         # to realize that we need the key for it ?
         got_the_key = (self.carrying and self.carrying.type == 'key'
             and self.carrying.color == self.fwd_cell.color)
@@ -568,7 +568,7 @@ class Bot:
         # Check that no box has been opened
         self._check_erroneous_box_opening(action_taken)
 
-        # TODO: instead of updating all subgoals, just add a couple
+        # TO_DO: instead of updating all subgoals, just add a couple
         # properties to the `Subgoal` class.
         for subgoal in self.stack:
             subgoal.update_agent_attributes()

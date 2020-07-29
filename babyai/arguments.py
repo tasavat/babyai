@@ -96,6 +96,6 @@ class ArgumentParser(argparse.ArgumentParser):
             args.seed = int(os.environ['SLURM_ARRAY_TASK_ID'])
             print('set seed to {}'.format(args.seed))
 
-        # TODO: more validation
+        # TO_DO: more validation
 
         return args
