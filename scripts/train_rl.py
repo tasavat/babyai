@@ -19,10 +19,9 @@ import babyai
 import babyai.utils as utils
 import babyai.rl
 from babyai.arguments import ArgumentParser
-from babyai.model import ACModel
+from babyai.model import ACModel, ACModelImgInstr
 from babyai.evaluate import batch_evaluate
 from babyai.utils.agent import ModelAgent
-
 
 # Parse arguments
 parser = ArgumentParser()
@@ -83,7 +82,10 @@ def main():
     if 'emb' in args.arch:
         obss_preprocessor = utils.IntObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
     else:
+        """
         obss_preprocessor = utils.ObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
+        """
+        obss_preprocessor = utils.ImgInstrObssPreprocessor(args.model, envs[0].observation_space)
 
     # Define actor-critic model
     acmodel = utils.load_model(args.model, raise_not_found=False)
@@ -91,11 +93,18 @@ def main():
         if args.pretrained_model:
             acmodel = utils.load_model(args.pretrained_model, raise_not_found=True)
         else:
+            """
             acmodel = ACModel(obss_preprocessor.obs_space, envs[0].action_space,
                               args.image_dim, args.memory_dim, args.instr_dim,
                               not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
+            """
+            acmodel = ACModelImgInstr(obss_preprocessor.obs_space, envs[0].action_space,
+                                      args.image_dim, args.memory_dim, args.instr_dim,
+                                      not args.no_instr, not args.no_mem, args.arch)
 
+    """
     obss_preprocessor.vocab.save()
+    """
     utils.save_model(acmodel, args.model)
 
     if torch.cuda.is_available():
@@ -223,7 +232,9 @@ def main():
         # Save obss preprocessor vocabulary and model
 
         if args.save_interval > 0 and status['i'] % args.save_interval == 0:
+            """
             obss_preprocessor.vocab.save()
+            """
             with open(status_path, 'w') as dst:
                 json.dump(status, dst)
                 utils.save_model(acmodel, args.model)
@@ -245,7 +256,9 @@ def main():
                 save_model = True
             if save_model:
                 utils.save_model(acmodel, args.model + '_best')
+                """
                 obss_preprocessor.vocab.save(utils.get_vocab_path(args.model + '_best'))
+                """
                 logger.info("Return {: .2f}; best model is saved".format(mean_return))
             else:
                 logger.info("Return {: .2f}; not the best model; not saved".format(mean_return))

@@ -353,25 +353,18 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
 
         # Define instruction embedding
         if self.use_instr:
-            # TODO: implement instruction embedding
-            """
-            if self.lang_model in ['gru', 'bigru', 'attgru']:
-                self.word_embedding = nn.Embedding(obs_space["instr"], self.instr_dim)
-                if self.lang_model in ['gru', 'bigru', 'attgru']:
-                    gru_dim = self.instr_dim
-                    if self.lang_model in ['bigru', 'attgru']:
-                        gru_dim //= 2
-                    self.instr_rnn = nn.GRU(
-                        self.instr_dim, gru_dim, batch_first=True,
-                        bidirectional=(self.lang_model in ['bigru', 'attgru']))
-                    self.final_instr_dim = self.instr_dim
-                else:
-                    kernel_dim = 64
-                    kernel_sizes = [3, 4]
-                    self.instr_convs = nn.ModuleList([
-                        nn.Conv2d(1, kernel_dim, (K, self.instr_dim)) for K in kernel_sizes])
-                    self.final_instr_dim = kernel_dim * len(kernel_sizes)
-            """
+            self.instr_cnn = nn.Sequential(
+                nn.Conv2d(in_channels=3*2, out_channels=16, kernel_size=(3, 3)),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
+                nn.Conv2d(in_channels=16, out_channels=32, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=32, out_channels=image_dim, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Flatten(),
+                nn.Linear(image_dim, instr_dim),
+            )
+            self.final_instr_dim = self.instr_dim
 
         # Define memory
         if self.use_memory:
@@ -508,43 +501,7 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
 
     def _get_instr_embedding(self, instr):
-        # TODO: implement instruction images embedding mechanism
-        """
-        lengths = (instr != 0).sum(1).long()
-        if self.lang_model == 'gru':
-            out, _ = self.instr_rnn(self.word_embedding(instr))
-            hidden = out[range(len(lengths)), lengths-1, :]
-            return hidden
-
-        elif self.lang_model in ['bigru', 'attgru']:
-            masks = (instr != 0).float()
-
-            if lengths.shape[0] > 1:
-                seq_lengths, perm_idx = lengths.sort(0, descending=True)
-                iperm_idx = torch.LongTensor(perm_idx.shape).fill_(0)
-                if instr.is_cuda: iperm_idx = iperm_idx.cuda()
-                for i, v in enumerate(perm_idx):
-                    iperm_idx[v.data] = i
-
-                inputs = self.word_embedding(instr)
-                inputs = inputs[perm_idx]
-
-                inputs = pack_padded_sequence(inputs, seq_lengths.data.cpu().numpy(), batch_first=True)
-
-                outputs, final_states = self.instr_rnn(inputs)
-            else:
-                instr = instr[:, 0:lengths[0]]
-                outputs, final_states = self.instr_rnn(self.word_embedding(instr))
-                iperm_idx = None
-            final_states = final_states.transpose(0, 1).contiguous()
-            final_states = final_states.view(final_states.shape[0], -1)
-            if iperm_idx is not None:
-                outputs, _ = pad_packed_sequence(outputs, batch_first=True)
-                outputs = outputs[iperm_idx]
-                final_states = final_states[iperm_idx]
-
-            return outputs if self.lang_model == 'attgru' else final_states
-
-        else:
-            ValueError("Undefined instruction architecture: {}".format(self.use_instr))
-        """
+        instr_embedding = self.instr_cnn(instr)
+        # zerotify
+        instr_embedding = torch.zeros_like(instr_embedding)
+        return instr_embedding

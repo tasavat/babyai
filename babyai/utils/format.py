@@ -136,15 +136,25 @@ class ImgInstrPreprocessor(object):
         img_instrs = []
         for obs in obss:
             # retrieve image instruction from cache by env id
-            img_instr = self.img_instr_dict[obs['id']]
+            if obs['id'] in self.img_instr_dict.img_instr.keys():
+                img_instr = self.img_instr_dict[obs['id']]
             # generate new image instruction with pretrained agent
-            if not img_instr:
+            else:
                 img_instr = self._generate_img_instr(obs, device=device)
                 self.img_instr_dict[obs['id']] = img_instr
             img_instrs.append(img_instr)
 
-        img_instrs = torch.tensor(img_instrs, device=device, dtype=torch.float)
+        img_instrs = torch.stack(img_instrs, dim=0)
         return img_instrs
+
+    def _full_obs(self):
+        full_obs = self.simulated_env.grid.encode()
+        full_obs[self.simulated_env.agent_pos[0]][self.simulated_env.agent_pos[0]] = numpy.array([
+            10,
+            0,
+            self.simulated_env.agent_dir
+        ])
+        return full_obs
 
     def _generate_img_instr(self, obs, device=None):
         # retrieve mission
@@ -157,7 +167,7 @@ class ImgInstrPreprocessor(object):
             while True:
                 self.simulated_obs = self.simulated_env.reset()
                 if self.simulated_obs['mission'] == mission:
-                    img_instrs = [self.simulated_obs['image']]  # first observation
+                    img_instr = [self._full_obs()]  # first observation
                     break
 
             # simulate until done
@@ -169,9 +179,7 @@ class ImgInstrPreprocessor(object):
                 with torch.no_grad():
                     model_results = self.pretrained_agent(preprocessed_obs, memory * mask.unsqueeze(1))
                     dist = model_results['dist']
-                    value = model_results['value']
                     memory_ = model_results['memory']
-                    extra_predictions = model_results['extra_predictions']
                 action = dist.sample()
                 obs, reward, done, env_info = self.simulated_env.step(action.cpu().numpy())
 
@@ -182,9 +190,11 @@ class ImgInstrPreprocessor(object):
 
                 if done and reward > 0:
                     success = True
-                    img_instrs.append(self.simulated_obs['image'])  # finished observation
+                    img_instr.append(self._full_obs())  # finished observation
 
-        return img_instrs
+        img_instr = torch.tensor(img_instr, device=device, dtype=torch.float)
+        img_instr = torch.reshape(img_instr, (-1, img_instr.size()[1], img_instr.size()[2]))
+        return img_instr
 
 
 class RawImagePreprocessor(object):
