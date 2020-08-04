@@ -162,7 +162,8 @@ class ImgInstrPreprocessor(object):
 
         # regenerate env + play until success (reward > 0)
         success = False
-        while not success:
+        patience_cnt = 0
+        while (not success) or patience_cnt < 3:
             # generate new env until both missions match
             while True:
                 self.simulated_obs = self.simulated_env.reset()
@@ -191,6 +192,7 @@ class ImgInstrPreprocessor(object):
                 if done and reward > 0:
                     success = True
                     img_instr.append(self._full_obs())  # finished observation
+                patience_cnt += 1
 
         img_instr = torch.tensor(img_instr, device=device, dtype=torch.float)
         img_instr = torch.reshape(img_instr, (-1, img_instr.size()[1], img_instr.size()[2]))

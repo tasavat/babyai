@@ -503,5 +503,5 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
     def _get_instr_embedding(self, instr):
         instr_embedding = self.instr_cnn(instr)
         # zerotify
-        instr_embedding = torch.zeros_like(instr_embedding)
+        # instr_embedding = torch.zeros_like(instr_embedding)
         return instr_embedding
