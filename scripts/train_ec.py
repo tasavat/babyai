@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
-
+# TODO: implement train_ec.py
 """
-Script to train the agent through reinforcement learning.
+Script to train the agent through EC-reinforcement learning.
 """
 
 import os
@@ -19,14 +18,14 @@ import babyai
 import babyai.utils as utils
 import babyai.rl
 from babyai.arguments import ArgumentParser
-from babyai.model import ACModel, ACModelImgInstr
+from babyai.model import SpeakerModel, ListenerModel
 from babyai.evaluate import batch_evaluate
 from babyai.utils.agent import ModelAgent
 
 # Parse arguments
 parser = ArgumentParser()
-parser.add_argument("--algo", default='ppo',
-                    help="algorithm to use (default: ppo)")
+parser.add_argument("--algo", default='ppo_reinforce',
+                    help="algorithm to use (default: ppo_reinforce)")
 parser.add_argument("--discount", type=float, default=0.99,
                     help="discount factor (default: 0.99)")
 parser.add_argument("--reward-scale", type=float, default=20.,
@@ -53,6 +52,7 @@ def main():
     envs = []
     for i in range(args.procs):
         env = gym.make(args.env)
+        env = utils.FullyObsWrapper(env)
         env.seed(100 * args.seed + i)
         envs.append(env)
 
@@ -79,40 +79,32 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Define obss preprocessor
-    if 'emb' in args.arch:
-        obss_preprocessor = utils.IntObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
-    else:
-        """
-        obss_preprocessor = utils.ObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
-        """
-        obss_preprocessor = utils.ImgInstrObssPreprocessor(args.model, envs[0].observation_space)
+    speaker_obss_preprocessor = utils.SpeakerObssPreprocessor(args.model)
+    listener_obss_preprocessor = utils.ListenerObssPreprocessor(args.model)
 
     # Define actor-critic model
-    acmodel = utils.load_model(args.model, raise_not_found=False)
-    if acmodel is None:
+    speaker, listener = utils.load_ec_model(args.model, raise_not_found=False)
+    if speaker is None:
         if args.pretrained_model:
-            acmodel = utils.load_model(args.pretrained_model, raise_not_found=True)
+            speaker, listener = utils.load_ec_model(args.pretrained_model, raise_not_found=True)
         else:
-            """
-            acmodel = ACModel(obss_preprocessor.obs_space, envs[0].action_space,
-                              args.image_dim, args.memory_dim, args.instr_dim,
-                              not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
-            """
-            acmodel = ACModelImgInstr(obss_preprocessor.obs_space, envs[0].action_space,
-                                      args.image_dim, args.memory_dim, args.instr_dim,
-                                      not args.no_instr, not args.no_mem, args.arch)
+            speaker = SpeakerModel(speaker_obss_preprocessor.obs_space, envs[0].action_space,
+                                   args.image_dim, args.memory_dim, args.instr_dim,
+                                   not args.no_instr, not args.no_mem, args.arch)
+            listener = ListenerModel(listener_obss_preprocessor.obs_space, envs[0].action_space,
+                                     args.image_dim, args.memory_dim, args.instr_dim,
+                                     not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
 
-    """
-    obss_preprocessor.vocab.save()
-    """
-    utils.save_model(acmodel, args.model)
+    utils.save_ec_model(speaker, listener, args.model)
 
     if torch.cuda.is_available():
-        acmodel.cuda()
+        speaker.cuda()
+        listener.cuda()
 
     # Define actor-critic algo
-
     reshape_reward = lambda _0, _1, reward, _2: args.reward_scale * reward
+    algo = babyai.rl.PPOReinforceAlgo()
+    """
     if args.algo == "ppo":
         algo = babyai.rl.PPOAlgo(envs, acmodel, args.frames_per_proc, args.discount, args.lr, args.beta1, args.beta2,
                                  args.gae_lambda,
@@ -121,6 +113,7 @@ def main():
                                  reshape_reward)
     else:
         raise ValueError("Incorrect algorithm name: {}".format(args.algo))
+    """
 
     # When using extra binary information, more tensors (model params) are initialized compared to when we don't use that.
     # Thus, there starts to be a difference in the random state. If we want to avoid it, in order to make sure that
@@ -129,7 +122,6 @@ def main():
     utils.seed(args.seed)
 
     # Restore training status
-
     status_path = os.path.join(utils.get_log_dir(args.model), 'status.json')
     if os.path.exists(status_path):
         with open(status_path, 'r') as src:
@@ -140,7 +132,6 @@ def main():
                   'num_frames': 0}
 
     # Define logger and Tensorboard writer and CSV writer
-
     header = (["update", "episodes", "frames", "FPS", "duration"]
               + ["return_" + stat for stat in ['mean', 'std', 'min', 'max']]
               + ["success_rate"]
@@ -148,7 +139,6 @@ def main():
               + ["entropy", "value", "policy_loss", "value_loss", "loss", "grad_norm"])
     if args.tb:
         from tensorboardX import SummaryWriter
-
         writer = SummaryWriter(utils.get_log_dir(args.model))
     csv_path = os.path.join(utils.get_log_dir(args.model), 'log.csv')
     first_created = not os.path.exists(csv_path)
@@ -159,7 +149,6 @@ def main():
         csv_writer.writerow(header)
 
     # Log code state, command, availability of CUDA and model
-
     babyai_code = list(babyai.__path__)[0]
     try:
         last_commit = subprocess.check_output(
@@ -179,17 +168,16 @@ def main():
     logger.info('COMMAND LINE ARGS:')
     logger.info(args)
     logger.info("CUDA available: {}".format(torch.cuda.is_available()))
-    logger.info(acmodel)
+    logger.info(speaker)
+    logger.info(listener)
 
     # Train model
-
     total_start_time = time.time()
     best_success_rate = 0
     best_mean_return = 0
     test_env_name = args.env
     while status['num_frames'] < args.frames:
         # Update parameters
-
         update_start_time = time.time()
         logs = algo.update_parameters()
         update_end_time = time.time()
@@ -199,7 +187,6 @@ def main():
         status['i'] += 1
 
         # Print logs
-
         if status['i'] % args.log_interval == 0:
             total_ellapsed_time = int(time.time() - total_start_time)
             fps = logs["num_frames"] / (update_end_time - update_start_time)
@@ -230,15 +217,12 @@ def main():
             csv_writer.writerow(data)
 
         # Save obss preprocessor vocabulary and model
-
         if args.save_interval > 0 and status['i'] % args.save_interval == 0:
-            """
-            obss_preprocessor.vocab.save()
-            """
             with open(status_path, 'w') as dst:
                 json.dump(status, dst)
-                utils.save_model(acmodel, args.model)
+                utils.save_ec_model(speaker, listener, args.model)
 
+            """
             # Testing the model before saving
             agent = ModelAgent(args.model, obss_preprocessor, argmax=True)
             agent.model = acmodel
@@ -256,12 +240,10 @@ def main():
                 save_model = True
             if save_model:
                 utils.save_model(acmodel, args.model + '_best')
-                """
-                obss_preprocessor.vocab.save(utils.get_vocab_path(args.model + '_best'))
-                """
                 logger.info("Return {: .2f}; best model is saved".format(mean_return))
             else:
                 logger.info("Return {: .2f}; not the best model; not saved".format(mean_return))
+        """
 
 
 if __name__ == "__main__":

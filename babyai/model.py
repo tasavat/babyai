@@ -460,16 +460,16 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
     def semi_memory_size(self):
         return self.memory_dim
 
-    def forward(self, obs, memory, instr_embedding=None):
+    def forward(self, obs, memory, instr_embedding=None, inject_dummy=False):
         if self.use_instr and instr_embedding is None:
-            instr_embedding = self._get_instr_embedding(obs.instr)
+            instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=inject_dummy)
 
         x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
 
         if self.arch.startswith("expert_filmcnn"):
             x = self.image_conv(x)
-            for controler in self.controllers:
-                x = controler(x, instr_embedding)
+            for controller in self.controllers:
+                x = controller(x, instr_embedding)
             x = F.relu(self.film_pool(x))
         else:
             x = self.image_conv(x)
@@ -500,8 +500,127 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
 
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
 
-    def _get_instr_embedding(self, instr):
+    def _get_instr_embedding(self, instr, inject_dummy=False):
         instr_embedding = self.instr_cnn(instr)
-        # zerotify
-        # instr_embedding = torch.zeros_like(instr_embedding)
+        if inject_dummy:
+            instr_embedding = torch.zeros_like(instr_embedding)
         return instr_embedding
+
+
+# TODO: implement Speaker and Listener models
+class SpeakerModel(ACModelImgInstr):
+    def __init__(self, obs_space, action_space,
+                 image_dim=128, memory_dim=128, instr_dim=128,
+                 use_instr=True, use_memory=False, arch="cnn1", aux_info=None,
+                 vocab_size=None, max_len=10, instr_gru_num_layers=2, force_eos=True):
+        super().__init__(obs_space, action_space,
+                         image_dim=image_dim, memory_dim=memory_dim, instr_dim=instr_dim,
+                         use_instr=use_instr, use_memory=False, arch=arch, aux_info=aux_info)
+        # remove actor-critic heads
+        self.actor = None
+        self.critic = None
+
+        # inject LSTM
+        self.vocab_size = vocab_size
+        self.max_len = max_len
+        self.force_eos = force_eos
+        self.instr_gru_num_layers = instr_gru_num_layers
+        self.instr_gru_hidden_size = instr_dim
+        self.instr_gru = nn.ModuleList([
+            nn.GRUCell(input_size=self.embedding_size, hidden_size=self.instr_gru_hidden_size)
+            if i == 0 else
+            nn.GRUCell(input_size=self.instr_gru_hidden_size, hidden_size=self.instr_gru_hidden_size)
+            for i in range(self.instr_gru_num_layers)
+        ])
+        self.hidden_to_output = nn.Linear(self.instr_gru_hidden_size, vocab_size)
+        self.vocab_embedding = nn.Embedding(vocab_size, self.embedding_size)
+        self.sos_embedding = nn.Parameter(torch.zeros(self.embedding_size), requires_grad=False)
+        self.reset_sos_embeddings()
+
+    def reset_sos_embeddings(self):
+        nn.init.normal_(self.sos_embedding, 0.0, 0.01)
+
+    def forward(self, obs, memory, instr_embedding=None, inject_dummy=False):
+        if self.use_instr and instr_embedding is None:
+            instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=inject_dummy)
+
+        x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
+
+        if self.arch.startswith("expert_filmcnn"):
+            x = self.image_conv(x)
+            for controller in self.controllers:
+                x = controller(x, instr_embedding)
+            x = F.relu(self.film_pool(x))
+        else:
+            x = self.image_conv(x)
+
+        x = x.reshape(x.shape[0], -1)
+
+        if self.use_memory:
+            hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
+            hidden = self.memory_rnn(x, hidden)
+            embedding = hidden[0]
+            memory = torch.cat(hidden, dim=1)
+        else:
+            embedding = x
+
+        if self.use_instr and not "filmcnn" in self.arch:
+            embedding = torch.cat((embedding, instr_embedding), dim=1)
+
+        if hasattr(self, 'aux_info') and self.aux_info:
+            extra_predictions = {info: self.extra_heads[info](embedding) for info in self.extra_heads}
+        else:
+            extra_predictions = dict()
+
+        # instruction gru
+        prev_hidden = [embedding]
+        prev_hidden.extend([torch.zeros_like(prev_hidden[0]) for _ in range(self.instr_gru_num_layers - 1)])
+        input = torch.stack([self.sos_embedding] * embedding.size(0))
+
+        sequence = []
+        logits = []
+        entropy = []
+
+        for step in range(self.max_len):
+            for i, layer in enumerate(self.instr_gru):
+                h_t = layer(input, prev_hidden[i])
+                prev_hidden[i] = h_t
+                input = h_t
+
+            step_logits = F.log_softmax(self.hidden_to_output(h_t), dim=1)
+            distr = Categorical(logits=step_logits)
+            entropy.append(distr.entropy())
+
+            if self.training:
+                x = distr.sample()
+            else:
+                x = step_logits.argmax(dim=1)
+            logits.append(distr.log_prob(x))
+
+            input = self.vocab_embedding(x)
+            sequence.append(x)
+
+        sequence = torch.stack(sequence).permute(1, 0)
+        logits = torch.stack(logits).permute(1, 0)
+        entropy = torch.stack(entropy).permute(1, 0)
+
+        if self.force_eos:
+            zeros = torch.zeros((sequence.size(0), 1)).to(sequence.device)
+
+            sequence = torch.cat([sequence, zeros.long()], dim=1)
+            logits = torch.cat([logits, zeros], dim=1)
+            entropy = torch.cat([entropy, zeros], dim=1)
+
+        return {'dist': logits, 'value': sequence, 'entropy': entropy,
+                'memory': memory, 'extra_predictions': extra_predictions}
+
+
+class ListenerModel(ACModel):
+    def __init__(self, obs_space, action_space,
+                 image_dim=128, memory_dim=128, instr_dim=128,
+                 use_instr=False, lang_model="gru", use_memory=False,
+                 arch="cnn1", aux_info=None):
+        super().__init__(obs_space, action_space,
+                         image_dim=image_dim, memory_dim=memory_dim, instr_dim=instr_dim,
+                         use_instr=use_instr, lang_model=lang_model, use_memory=use_memory,
+                         arch=arch, aux_info=aux_info)

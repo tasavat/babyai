@@ -62,9 +62,7 @@ class Vocabulary:
         json.dump(self.vocab, open(path, "w"))
 
     def copy_vocab_from(self, other):
-        '''
-        Copy the vocabulary of another Vocabulary object to the current object.
-        '''
+        """Copy the vocabulary of another Vocabulary object to the current object."""
         self.vocab.update(other.vocab)
 
 
@@ -273,7 +271,7 @@ class ImgInstrObssPreprocessor(object):
         self.instr_preproc = ImgInstrPreprocessor(model_name, obs_space)
         self.obs_space = {
             "image": 147,
-            "instr": 147,
+            "instr": None,
         }
 
     def __call__(self, obss, device=None):
@@ -284,5 +282,35 @@ class ImgInstrObssPreprocessor(object):
 
         if "instr" in self.obs_space.keys():
             obs_.instr = self.instr_preproc(obss, device=device)
+
+        return obs_
+
+
+class SpeakerObssPreprocessor(ImgInstrObssPreprocessor):
+    def __init__(self, model_name):
+        super().__init__(model_name)
+        self.obs_spac = {
+            "image": 8*8*3,
+            "instr": None
+        }
+
+
+class ListenerObssPreprocessor(object):
+    def __init__(self, model_name):
+        self.image_preproc = RawImagePreprocessor()
+        self.obs_space = {
+            "image": 8*8*3,
+            "instr": 50  # arbitrary max vocab size
+        }
+
+    def __call__(self, obss, messages=None, device=None):
+        obs_ = babyai.rl.DictList()
+
+        if "image" in self.obs_space.keys():
+            obs_.image = self.image_preproc(obss, device=device)
+
+        if "instr" in self.obs_space.keys():
+            # replace instruction with speaker's message
+            obs_.instr = messages
 
         return obs_
