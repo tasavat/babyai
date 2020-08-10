@@ -300,7 +300,7 @@ class ListenerObssPreprocessor(object):
         self.image_preproc = RawImagePreprocessor()
         self.obs_space = {
             "image": 8*8*3,
-            "instr": 50  # arbitrary max vocab size
+            "instr": 100  # arbitrary max vocab size
         }
 
     def __call__(self, obss, messages=None, device=None):
@@ -311,6 +311,9 @@ class ListenerObssPreprocessor(object):
 
         if "instr" in self.obs_space.keys():
             # replace instruction with speaker's message
-            obs_.instr = messages
+            if messages is not None:
+                obs_.instr = messages
+            else:
+                raise ValueError("message must be provided")
 
         return obs_

@@ -42,6 +42,12 @@ parser.add_argument("--ppo-epochs", type=int, default=4,
                     help="number of epochs for PPO (default: 4)")
 parser.add_argument("--save-interval", type=int, default=50,
                     help="number of updates between two saves (default: 50, 0 means no saving)")
+parser.add_argument("--vocab_size", type=int, default=5,
+                    help="size of vocabulary (default: 5)")
+parser.add_argument("--max_len", type=int, default=5,
+                    help="message's maximum length(default: 5)")
+parser.add_argument("--suffix", type=str, default=None,
+                    help="suffix to model's name (default: None)")
 args = parser.parse_args()
 
 utils.seed(args.seed)
@@ -57,7 +63,7 @@ def main():
         envs.append(env)
 
     # Define model name
-    suffix = datetime.datetime.now().strftime("%y-%m-%d-%H-%M-%S")
+    suffix = args.suffix or datetime.datetime.now().strftime("%y-%m-%d-%H-%M-%S")
     instr = args.instr_arch if args.instr_arch else "noinstr"
     mem = "mem" if not args.no_mem else "nomem"
     model_name_parts = {
@@ -69,8 +75,11 @@ def main():
         'seed': args.seed,
         'info': '',
         'coef': '',
-        'suffix': suffix}
-    default_model_name = "{env}_{algo}_{arch}_{instr}_{mem}_seed{seed}{info}{coef}_{suffix}".format(**model_name_parts)
+        'suffix': suffix,
+        'vocab_size': args.vocab_size,
+        'max_len': args.max_len
+    }
+    default_model_name = "{env}_{algo}_{arch}_{instr}_{mem}_seed{seed}{info}{coef}_V{vocab_size}_L{max_len}_{suffix}".format(**model_name_parts)
     if args.pretrained_model:
         default_model_name = args.pretrained_model + '_pretrained_' + default_model_name
     args.model = args.model.format(**model_name_parts) if args.model else default_model_name
@@ -90,7 +99,8 @@ def main():
         else:
             speaker = SpeakerModel(speaker_obss_preprocessor.obs_space, envs[0].action_space,
                                    args.image_dim, args.memory_dim, args.instr_dim,
-                                   not args.no_instr, not args.no_mem, args.arch)
+                                   not args.no_instr, not args.no_mem, args.arch,
+                                   vocab_size=args.vocab_size, max_len=args.max_len)
             listener = ListenerModel(listener_obss_preprocessor.obs_space, envs[0].action_space,
                                      args.image_dim, args.memory_dim, args.instr_dim,
                                      not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
@@ -103,7 +113,11 @@ def main():
 
     # Define actor-critic algo
     reshape_reward = lambda _0, _1, reward, _2: args.reward_scale * reward
-    algo = babyai.rl.PPOReinforceAlgo()
+    algo = babyai.rl.PPOReinforceAlgo(envs, speaker, listener, args.frames_per_proc,
+                                      args.discount, args.lr, args.beta1, args.beta2, args.gae_lambda,
+                                      args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
+                                      args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size,
+                                      speaker_obss_preprocessor, listener_obss_preprocessor, reshape_reward)
     """
     if args.algo == "ppo":
         algo = babyai.rl.PPOAlgo(envs, acmodel, args.frames_per_proc, args.discount, args.lr, args.beta1, args.beta2,

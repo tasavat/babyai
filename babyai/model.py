@@ -512,7 +512,7 @@ class SpeakerModel(ACModelImgInstr):
     def __init__(self, obs_space, action_space,
                  image_dim=128, memory_dim=128, instr_dim=128,
                  use_instr=True, use_memory=False, arch="cnn1", aux_info=None,
-                 vocab_size=None, max_len=10, instr_gru_num_layers=2, force_eos=True):
+                 vocab_size=None, max_len=None, instr_gru_num_layers=2, force_eos=True):
         super().__init__(obs_space, action_space,
                          image_dim=image_dim, memory_dim=memory_dim, instr_dim=instr_dim,
                          use_instr=use_instr, use_memory=False, arch=arch, aux_info=aux_info)

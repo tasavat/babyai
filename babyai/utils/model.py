@@ -34,6 +34,8 @@ def load_model(model_name, raise_not_found=True):
 def load_ec_model(model_name, raise_not_found=True):
     speaker_path = get_speaker_path(model_name)
     listener_path = get_listener_path(model_name)
+    # print("speaker_path: {}".format(speaker_path))
+    # print("listener_path: {}".format(speaker_path))
     try:
         speaker = torch.load(speaker_path)
         listener = torch.load(listener_path)
@@ -43,6 +45,7 @@ def load_ec_model(model_name, raise_not_found=True):
     except FileNotFoundError:
         if raise_not_found:
             raise FileNotFoundError("No model found at {}".format(path))
+        return None, None
 
 
 def save_model(model, model_name):
@@ -54,5 +57,7 @@ def save_model(model, model_name):
 def save_ec_model(speaker, listener, model_name):
     speaker_path = get_speaker_path(model_name)
     listener_path = get_listener_path(model_name)
+    utils.create_folders_if_necessary(speaker_path)
+    utils.create_folders_if_necessary(listener_path)
     torch.save(speaker, speaker_path)
     torch.save(listener, listener_path)
