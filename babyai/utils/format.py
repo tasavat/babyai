@@ -158,7 +158,7 @@ class ImgInstrPreprocessor(object):
         # retrieve mission
         mission = obs["mission"]
 
-        # regenerate env + play until success (reward > 0)
+        # regenerate env + trial for 3 plays (reward > 0)
         success = False
         patience_cnt = 0
         while (not success) or patience_cnt < 3:
@@ -187,9 +187,10 @@ class ImgInstrPreprocessor(object):
                 mask = 1 - torch.tensor(done, device=device, dtype=torch.float)
                 mask = torch.reshape(mask, (1,))
 
-                if done and reward > 0:
-                    success = True
+                if done:
                     img_instr.append(self._full_obs())  # finished observation
+                if reward > 0:
+                    success = True
                 patience_cnt += 1
 
         img_instr = torch.tensor(img_instr, device=device, dtype=torch.float)

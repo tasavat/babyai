@@ -1,10 +1,11 @@
-# TODO: implement ppo_reinforce algorithms
-from abc import ABC, abstractmethod
 import torch
 import numpy
+from abc import ABC, abstractmethod
+from collections import defaultdict
 
 from babyai.rl.format import default_preprocess_obss
 from babyai.rl.utils import DictList, ParallelEnv
+from babyai.rl.utils.baselines import MeanBaseline
 from babyai.rl.utils.supervised_losses import ExtraInfoCollector
 
 
@@ -89,10 +90,14 @@ class BaseECAlgo(ABC):
         self.obss = [None]*(shape[0])
 
         self.message = None
-        self.messages = [None]*(shape[0])
+        self.messages = []
+        self.message_logit = None
+        self.message_logits = []
         self.message_entropy = None
-        self.message_entropies = [None]*(shape[0])
+        self.message_entropies = []
+        self.s_rewards = []  # reward at the end of the episode
         self.replace_message = False
+        self.instructions = [None]*(shape[0])
 
         self.s_memory = torch.zeros(shape[1], self.speaker.memory_size, device=self.device)
         self.s_memories = torch.zeros(*shape, self.speaker.memory_size, device=self.device)
@@ -144,18 +149,23 @@ class BaseECAlgo(ABC):
             reward, policy loss, value loss, etc.
 
         """
+        # reset variables
+        self.messages = []
+        self.message_logits = []
+        self.message_entropies = []
+        self.s_rewards = []
+
         for i in range(self.num_frames_per_proc):
             # Do one agent-environment interaction
-
             # speaker's turn
-            s_preprocessed_obs = self.s_preprocess_obss(self.obs, device=self.device)
-            with torch.no_grad():
+            if self.message is None or self.replace_message:
+                s_preprocessed_obs = self.s_preprocess_obss(self.obs, device=self.device)
                 model_results = self.speaker(s_preprocessed_obs, self.s_memory * self.s_mask.unsqueeze(1))
                 message = model_results['value']
+                logits = model_results['logits']
                 entropy = model_results['entropy']
-                s_memory = model_results['memory']
-            if self.message is None or self.replace_message:
                 self.message = message
+                self.message_logit = logits
                 self.message_entropy = entropy
                 self.replace_message = False
 
@@ -179,19 +189,12 @@ class BaseECAlgo(ABC):
             self.obss[i] = self.obs
             self.obs = obs
 
-            self.messages[i] = self.message
-            self.message_entropies[i] = self.message_entropy
-
-            self.s_memories[i] = self.s_memory
-            self.s_memory = s_memory
             self.l_memories[i] = self.l_memory
             self.l_memory = l_memory
-
-            self.s_masks[i] = self.s_mask
-            self.s_mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
             self.l_masks[i] = self.l_mask
             self.l_mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
 
+            self.instructions[i] = self.message
             self.actions[i] = action
             self.values[i] = value
             if self.reshape_reward is not None:
@@ -211,13 +214,18 @@ class BaseECAlgo(ABC):
             self.log_episode_reshaped_return += self.rewards[i]
             self.log_episode_num_frames += torch.ones(self.num_procs, device=self.device)
 
-            for i, done_ in enumerate(done):
+            for j, done_ in enumerate(done):
                 if done_:
                     self.log_done_counter += 1
-                    self.log_return.append(self.log_episode_return[i].item())
-                    self.log_reshaped_return.append(self.log_episode_reshaped_return[i].item())
-                    self.log_num_frames.append(self.log_episode_num_frames[i].item())
+                    self.log_return.append(self.log_episode_return[j].item())
+                    self.log_reshaped_return.append(self.log_episode_reshaped_return[j].item())
+                    self.log_num_frames.append(self.log_episode_num_frames[j].item())
+
                     self.replace_message = True
+                    self.messages.append(self.message[j])
+                    self.message_logits.append(self.message_logit[j])
+                    self.message_entropies.append(self.message_entropy[j])
+                    self.s_rewards.append(self.rewards[i][j])
 
             self.log_episode_return *= self.l_mask
             self.log_episode_reshaped_return *= self.l_mask
@@ -239,23 +247,24 @@ class BaseECAlgo(ABC):
         # Flatten the data correctly, making sure that
         # each episode's data is a continuous chunk
         s_exps = DictList()
+        s_exps.has_data = False
+        if len(self.messages) > 0:
+            s_exps.has_data = True
+            s_exps.message = torch.stack(self.messages)
+            s_exps.message_logit = torch.stack(self.message_logits)
+            s_exps.message_entropy = torch.stack(self.message_entropies)
+            s_exps.s_reward = torch.stack(self.s_rewards)
+
         l_exps = DictList()
-        s_exps.obs = [
-            self.obss[i][j]
-            for j in range(self.num_procs)
-            for i in range(self.num_frames_per_proc)
-        ]
         l_exps.obs = [
             self.obss[i][j]
             for j in range(self.num_procs)
             for i in range(self.num_frames_per_proc)
         ]
-        s_exps.message = torch.stack(self.messages)
-        s_exps.message_entropy = torch.stack(self.message_entropies)
-        l_exps.message = torch.stack(self.messages).reshape(-1).unsqueeze(1)
-        # In commments below T is self.num_frames_per_proc, P is self.num_procs,
-        # D is the dimensionality
+        l_exps.instruction = torch.stack(self.instructions).reshape(-1).unsqueeze(1)
 
+        # In comments below T is self.num_frames_per_proc, P is self.num_procs,
+        # D is the dimensionality
         # T x P x D -> P x T x D -> (P * T) x D
         l_exps.memory = self.l_memories.transpose(0, 1).reshape(-1, *self.l_memories.shape[2:])
         # T x P -> P x T -> (P * T) x 1
@@ -270,11 +279,11 @@ class BaseECAlgo(ABC):
         l_exps.log_prob = self.log_probs.transpose(0, 1).reshape(-1)
 
         if self.aux_info:
-            l_exps = self.aux_info_collector.end_collection(exps)
+            l_exps = self.aux_info_collector.end_collection(l_exps)
 
         # Preprocess experiences
-        s_exps.obs = self.s_preprocess_obss(s_exps.obs, device=self.device)
-        l_exps.obs = self.l_preprocess_obss(l_exps.obs, l_exps.message, device=self.device)
+        # s_exps.obs = self.s_preprocess_obss(s_exps.obs, device=self.device)
+        l_exps.obs = self.l_preprocess_obss(l_exps.obs, l_exps.instruction, device=self.device)
 
         # Log some values
         keep = max(self.log_done_counter, self.num_procs)
@@ -318,8 +327,12 @@ class PPOReinforceAlgo(BaseECAlgo):
 
         assert self.batch_size % self.recurrence == 0
 
-        self.optimizer = torch.optim.Adam(self.listener.parameters(), lr, (beta1, beta2), eps=adam_eps)
+        self.s_optimizer = torch.optim.Adam(self.speaker.parameters(), 1e-2, (beta1, beta2), eps=adam_eps)
+        self.l_optimizer = torch.optim.Adam(self.listener.parameters(), lr, (beta1, beta2), eps=adam_eps)
         self.batch_num = 0
+
+        self.baselines = defaultdict(MeanBaseline)
+        self.length_cost = 0
 
     def update_parameters(self):
         # Collect experiences
@@ -337,7 +350,48 @@ class PPOReinforceAlgo(BaseECAlgo):
         being the added information. They are either (n_procs * n_frames_per_proc) 1D tensors or
         (n_procs * n_frames_per_proc) x k 2D tensors where k is the number of classes for multiclass classification
         '''
-        # TODO: update speaker
+        if s_exps.has_data:
+            message = s_exps.message
+            s_log_prob = s_exps.message_logit
+            s_entropy = s_exps.message_entropy
+            loss = -1 * s_exps.s_reward
+
+            message_length = self._find_lengths(message)
+            length_loss = message_length.float() * self.length_cost
+            # print("message")
+            # print(message)
+            # print("message length")
+            # print(message_length)
+
+            # the entropy of the outputs of S before and including the eos symbol - as we don't care about what's after
+            s_effective_entropy = torch.zeros(s_entropy.size(0), device=self.device)
+            # the log prob of the choices made by S before and including the eos symbol - again, we don't
+            # care about the rest
+            s_effective_log_prob = torch.zeros(s_log_prob.size(0), device=self.device)
+
+            for i in range(message.size(1)):
+                not_eosed = (i < message_length).float()
+                s_effective_entropy += s_entropy[:, i] * not_eosed
+                s_effective_log_prob += s_log_prob[:, i] * not_eosed
+            s_effective_entropy = s_effective_entropy / message_length.float()
+
+            policy_length_loss = ((length_loss - self.baselines['length'].predict(length_loss)) * s_effective_log_prob).mean()
+            policy_loss = ((loss.detach() - self.baselines['loss'].predict(loss.detach())) * s_effective_log_prob).mean()
+            weighted_entropy = s_effective_entropy.mean() * self.entropy_coef
+
+            optimized_loss = policy_length_loss + policy_loss - weighted_entropy
+            # if the receiver is deterministic/differentiable, we apply the actual loss
+            optimized_loss += loss.mean()
+
+            # optimize
+            self.s_optimizer.zero_grad()
+            optimized_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.speaker.parameters(), self.max_grad_norm)
+            self.s_optimizer.step()
+
+            # update baselines
+            self.baselines['loss'].update(loss)
+            self.baselines['length'].update(length_loss)
 
         # update listener
         for _ in range(self.epochs):
@@ -414,11 +468,11 @@ class PPOReinforceAlgo(BaseECAlgo):
                 batch_loss /= self.recurrence
 
                 # Update actor-critic
-                self.optimizer.zero_grad()
+                self.l_optimizer.zero_grad()
                 batch_loss.backward()
                 grad_norm = sum(p.grad.data.norm(2) ** 2 for p in self.listener.parameters() if p.grad is not None) ** 0.5
                 torch.nn.utils.clip_grad_norm_(self.listener.parameters(), self.max_grad_norm)
-                self.optimizer.step()
+                self.l_optimizer.step()
 
                 # Update log values
                 log_entropies.append(batch_entropy)
@@ -456,3 +510,29 @@ class PPOReinforceAlgo(BaseECAlgo):
 
         return batches_starting_indexes
 
+    @staticmethod
+    def _find_lengths(messages: torch.Tensor) -> torch.Tensor:
+        """
+        :param messages: A tensor of term ids, encoded as Long values, of size (batch size, max sequence length).
+        :returns A tensor with lengths of the sequences, including the end-of-sequence symbol <eos> (in EGG, it is 0).
+        If no <eos> is found, the full length is returned (i.e. messages.size(1)).
+
+        >>> messages = torch.tensor([[1, 1, 0, 0, 0, 1], [1, 1, 1, 10, 100500, 5]])
+        >>> lengths = find_lengths(messages)
+        >>> lengths
+        tensor([3, 6])
+        """
+        max_k = messages.size(1)
+        zero_mask = messages == 0
+        # a bit involved logic, but it seems to be faster for large batches than slicing batch dimension and
+        # querying torch.nonzero()
+        # zero_mask contains ones on positions where 0 occur in the outputs, and 1 otherwise
+        # zero_mask.cumsum(dim=1) would contain non-zeros on all positions after 0 occurred
+        # zero_mask.cumsum(dim=1) > 0 would contain ones on all positions after 0 occurred
+        # (zero_mask.cumsum(dim=1) > 0).sum(dim=1) equates to the number of steps that happened after 0 occured (including it)
+        # max_k - (zero_mask.cumsum(dim=1) > 0).sum(dim=1) is the number of steps before 0 took place
+
+        lengths = max_k - (zero_mask.cumsum(dim=1) > 0).sum(dim=1)
+        lengths.add_(1).clamp_(max=max_k)
+
+        return lengths

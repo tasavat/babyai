@@ -611,7 +611,7 @@ class SpeakerModel(ACModelImgInstr):
             logits = torch.cat([logits, zeros], dim=1)
             entropy = torch.cat([entropy, zeros], dim=1)
 
-        return {'dist': logits, 'value': sequence, 'entropy': entropy,
+        return {'logits': logits, 'value': sequence, 'entropy': entropy,
                 'memory': memory, 'extra_predictions': extra_predictions}
 
 

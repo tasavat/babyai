@@ -118,16 +118,6 @@ def main():
                                       args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
                                       args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size,
                                       speaker_obss_preprocessor, listener_obss_preprocessor, reshape_reward)
-    """
-    if args.algo == "ppo":
-        algo = babyai.rl.PPOAlgo(envs, acmodel, args.frames_per_proc, args.discount, args.lr, args.beta1, args.beta2,
-                                 args.gae_lambda,
-                                 args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
-                                 args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size, obss_preprocessor,
-                                 reshape_reward)
-    else:
-        raise ValueError("Incorrect algorithm name: {}".format(args.algo))
-    """
 
     # When using extra binary information, more tensors (model params) are initialized compared to when we don't use that.
     # Thus, there starts to be a difference in the random state. If we want to avoid it, in order to make sure that
