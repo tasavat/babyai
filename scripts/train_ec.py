@@ -1,4 +1,3 @@
-# TODO: implement train_ec.py
 """
 Script to train the agent through EC-reinforcement learning.
 """

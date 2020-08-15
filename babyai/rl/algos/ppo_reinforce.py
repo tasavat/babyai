@@ -164,7 +164,11 @@ class BaseECAlgo(ABC):
                 message = model_results['value']
                 logits = model_results['logits']
                 entropy = model_results['entropy']
+
                 self.message = message
+                # # dummy message
+                # self.message = torch.zeros_like(message)
+
                 self.message_logit = logits
                 self.message_entropy = entropy
                 self.replace_message = False
@@ -327,7 +331,7 @@ class PPOReinforceAlgo(BaseECAlgo):
 
         assert self.batch_size % self.recurrence == 0
 
-        self.s_optimizer = torch.optim.Adam(self.speaker.parameters(), 1e-2, (beta1, beta2), eps=adam_eps)
+        self.s_optimizer = torch.optim.Adam(self.speaker.parameters(), 0.1, (beta1, beta2), eps=adam_eps)
         self.l_optimizer = torch.optim.Adam(self.listener.parameters(), lr, (beta1, beta2), eps=adam_eps)
         self.batch_num = 0
 
@@ -350,6 +354,7 @@ class PPOReinforceAlgo(BaseECAlgo):
         being the added information. They are either (n_procs * n_frames_per_proc) 1D tensors or
         (n_procs * n_frames_per_proc) x k 2D tensors where k is the number of classes for multiclass classification
         '''
+
         if s_exps.has_data:
             message = s_exps.message
             s_log_prob = s_exps.message_logit
