@@ -53,6 +53,8 @@ def main():
     envs = []
     for i in range(args.procs):
         env = gym.make(args.env)
+        # [adjust]
+        env = utils.FullyObsWrapper(env)
         env.seed(100 * args.seed + i)
         envs.append(env)
 
@@ -82,9 +84,8 @@ def main():
     if 'emb' in args.arch:
         obss_preprocessor = utils.IntObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
     else:
-        """
-        obss_preprocessor = utils.ObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
-        """
+        # [adjust]
+        # obss_preprocessor = utils.ObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
         obss_preprocessor = utils.ImgInstrObssPreprocessor(args.model, envs[0].observation_space)
 
     # Define actor-critic model
@@ -93,18 +94,15 @@ def main():
         if args.pretrained_model:
             acmodel = utils.load_model(args.pretrained_model, raise_not_found=True)
         else:
-            """
-            acmodel = ACModel(obss_preprocessor.obs_space, envs[0].action_space,
-                              args.image_dim, args.memory_dim, args.instr_dim,
-                              not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
-            """
+            # [adjust]
+            # acmodel = ACModel(obss_preprocessor.obs_space, envs[0].action_space,
+            #                   args.image_dim, args.memory_dim, args.instr_dim,
+            #                   not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
             acmodel = ACModelImgInstr(obss_preprocessor.obs_space, envs[0].action_space,
                                       args.image_dim, args.memory_dim, args.instr_dim,
                                       not args.no_instr, not args.no_mem, args.arch)
-
-    """
-    obss_preprocessor.vocab.save()
-    """
+    # [adjust]
+    # obss_preprocessor.vocab.save()
     utils.save_model(acmodel, args.model)
 
     if torch.cuda.is_available():
@@ -182,14 +180,12 @@ def main():
     logger.info(acmodel)
 
     # Train model
-
     total_start_time = time.time()
     best_success_rate = 0
     best_mean_return = 0
     test_env_name = args.env
     while status['num_frames'] < args.frames:
         # Update parameters
-
         update_start_time = time.time()
         logs = algo.update_parameters()
         update_end_time = time.time()
@@ -199,7 +195,6 @@ def main():
         status['i'] += 1
 
         # Print logs
-
         if status['i'] % args.log_interval == 0:
             total_ellapsed_time = int(time.time() - total_start_time)
             fps = logs["num_frames"] / (update_end_time - update_start_time)
@@ -232,9 +227,8 @@ def main():
         # Save obss preprocessor vocabulary and model
 
         if args.save_interval > 0 and status['i'] % args.save_interval == 0:
-            """
-            obss_preprocessor.vocab.save()
-            """
+            # [adjust]
+            # obss_preprocessor.vocab.save()
             with open(status_path, 'w') as dst:
                 json.dump(status, dst)
                 utils.save_model(acmodel, args.model)
@@ -256,9 +250,8 @@ def main():
                 save_model = True
             if save_model:
                 utils.save_model(acmodel, args.model + '_best')
-                """
-                obss_preprocessor.vocab.save(utils.get_vocab_path(args.model + '_best'))
-                """
+                # [adjust]
+                # obss_preprocessor.vocab.save(utils.get_vocab_path(args.model + '_best'))
                 logger.info("Return {: .2f}; best model is saved".format(mean_return))
             else:
                 logger.info("Return {: .2f}; not the best model; not saved".format(mean_return))

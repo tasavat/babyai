@@ -47,6 +47,8 @@ parser.add_argument("--max_len", type=int, default=5,
                     help="message's maximum length(default: 5)")
 parser.add_argument("--suffix", type=str, default=None,
                     help="suffix to model's name (default: None)")
+parser.add_argument("--speaker_pretrained_model", type=str, default=None,
+                    help="path to speaker pretrained model (default: None)")
 args = parser.parse_args()
 
 utils.seed(args.seed)
@@ -99,7 +101,8 @@ def main():
             speaker = SpeakerModel(speaker_obss_preprocessor.obs_space, envs[0].action_space,
                                    args.image_dim, args.memory_dim, args.instr_dim,
                                    not args.no_instr, not args.no_mem, args.arch,
-                                   vocab_size=args.vocab_size, max_len=args.max_len)
+                                   vocab_size=args.vocab_size, max_len=args.max_len,
+                                   pretrained_model_path=args.speaker_pretrained_model)
             listener = ListenerModel(listener_obss_preprocessor.obs_space, envs[0].action_space,
                                      args.image_dim, args.memory_dim, args.instr_dim,
                                      not args.no_instr, args.instr_arch, not args.no_mem, args.arch)

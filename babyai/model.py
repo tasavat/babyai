@@ -6,6 +6,7 @@ from torch.distributions.categorical import Categorical
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import babyai.rl
 from babyai.rl.utils.supervised_losses import required_heads
+from babyai.utils.model import load_model
 
 
 # Function from https://github.com/ikostrikov/pytorch-a2c-ppo-acktr/blob/master/model.py
@@ -462,7 +463,8 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
 
     def forward(self, obs, memory, instr_embedding=None, inject_dummy=False):
         if self.use_instr and instr_embedding is None:
-            instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=inject_dummy)
+            # instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=inject_dummy)
+            instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=True)
 
         x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
 
@@ -507,12 +509,13 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
         return instr_embedding
 
 
-# TODO: implement Speaker and Listener models
 class SpeakerModel(ACModelImgInstr):
     def __init__(self, obs_space, action_space,
                  image_dim=128, memory_dim=128, instr_dim=128,
                  use_instr=True, use_memory=False, arch="cnn1", aux_info=None,
-                 vocab_size=None, max_len=None, instr_gru_num_layers=2, force_eos=True):
+                 vocab_size=None, max_len=None, instr_gru_num_layers=2, force_eos=True,
+                 pretrained_model_path=None
+                 ):
         super().__init__(obs_space, action_space,
                          image_dim=image_dim, memory_dim=memory_dim, instr_dim=instr_dim,
                          use_instr=use_instr, use_memory=False, arch=arch, aux_info=aux_info)
@@ -520,7 +523,11 @@ class SpeakerModel(ACModelImgInstr):
         self.actor = None
         self.critic = None
 
-        # inject LSTM
+        # update state
+        if pretrained_model_path:
+            self.load_pretrained_state(pretrained_model_path)
+
+        # inject instruction generator module
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.force_eos = force_eos
@@ -539,6 +546,15 @@ class SpeakerModel(ACModelImgInstr):
 
     def reset_sos_embeddings(self):
         nn.init.normal_(self.sos_embedding, 0.0, 0.01)
+
+    def load_pretrained_state(self, pretrained_model_path):
+        pretrained_model = load_model(pretrained_model_path, raise_not_found=True)
+        pretrained_dict = pretrained_model.state_dict()
+        model_dict = self.state_dict()
+        # update only relevant state
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict.keys()}
+        model_dict.update(pretrained_dict)
+        self.load_state_dict(model_dict)
 
     def forward(self, obs, memory, instr_embedding=None, inject_dummy=False):
         if self.use_instr and instr_embedding is None:
