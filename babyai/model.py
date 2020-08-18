@@ -526,6 +526,7 @@ class SpeakerModel(ACModelImgInstr):
         # update state
         if pretrained_model_path:
             self.load_pretrained_state(pretrained_model_path)
+            print(f"update pretrained state: {pretrained_model_path}")
 
         # inject instruction generator module
         self.vocab_size = vocab_size
@@ -626,6 +627,15 @@ class SpeakerModel(ACModelImgInstr):
             sequence = torch.cat([sequence, zeros.long()], dim=1)
             logits = torch.cat([logits, zeros], dim=1)
             entropy = torch.cat([entropy, zeros], dim=1)
+
+        # mask after EOS
+        max_k = sequence.size(1)
+        zero_mask = sequence == 0
+        lengths = max_k - (zero_mask.cumsum(dim=1) > 0).sum(dim=1)
+        lengths.add_(1).clamp_(max=max_k)
+        not_eosed = torch.stack([(i < lengths).float() for i in range(max_k)], dim=1).type('torch.cuda.LongTensor')
+
+        sequence = sequence * not_eosed
 
         return {'logits': logits, 'value': sequence, 'entropy': entropy,
                 'memory': memory, 'extra_predictions': extra_predictions}

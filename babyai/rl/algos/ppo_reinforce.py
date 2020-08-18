@@ -317,7 +317,8 @@ class PPOReinforceAlgo(BaseECAlgo):
                  discount=0.99, lr=7e-4, beta1=0.9, beta2=0.999, gae_lambda=0.95,
                  entropy_coef=0.01, value_loss_coef=0.5, max_grad_norm=0.5, recurrence=4,
                  adam_eps=1e-5, clip_eps=0.2, epochs=4, batch_size=256,
-                 s_preprocess_obss=None, l_preprocess_obss=None, reshape_reward=None, aux_info=None):
+                 s_preprocess_obss=None, l_preprocess_obss=None, reshape_reward=None, aux_info=None,
+                 s_lr=1e-3, s_max_grad_norm=1):
         num_frames_per_proc = num_frames_per_proc or 128
 
         super().__init__(envs, speaker, listener,
@@ -331,12 +332,13 @@ class PPOReinforceAlgo(BaseECAlgo):
 
         assert self.batch_size % self.recurrence == 0
 
-        self.s_optimizer = torch.optim.Adam(self.speaker.parameters(), 0.1, (beta1, beta2), eps=adam_eps)
+        self.s_optimizer = torch.optim.Adam(self.speaker.parameters(), s_lr)
         self.l_optimizer = torch.optim.Adam(self.listener.parameters(), lr, (beta1, beta2), eps=adam_eps)
         self.batch_num = 0
 
         self.baselines = defaultdict(MeanBaseline)
         self.length_cost = 0
+        self.s_max_grad_norm = s_max_grad_norm
 
     def update_parameters(self):
         # Collect experiences
@@ -354,6 +356,11 @@ class PPOReinforceAlgo(BaseECAlgo):
         being the added information. They are either (n_procs * n_frames_per_proc) 1D tensors or
         (n_procs * n_frames_per_proc) x k 2D tensors where k is the number of classes for multiclass classification
         '''
+        # update speaker
+        logs["s_policy_loss"] = numpy.nan
+        logs["s_entropy"] = numpy.nan
+        logs["s_optimized_loss"] = numpy.nan
+        logs["s_grad_norm"] = numpy.nan
 
         if s_exps.has_data:
             message = s_exps.message
@@ -363,10 +370,6 @@ class PPOReinforceAlgo(BaseECAlgo):
 
             message_length = self._find_lengths(message)
             length_loss = message_length.float() * self.length_cost
-            # print("message")
-            # print(message)
-            # print("message length")
-            # print(message_length)
 
             # the entropy of the outputs of S before and including the eos symbol - as we don't care about what's after
             s_effective_entropy = torch.zeros(s_entropy.size(0), device=self.device)
@@ -382,7 +385,7 @@ class PPOReinforceAlgo(BaseECAlgo):
 
             policy_length_loss = ((length_loss - self.baselines['length'].predict(length_loss)) * s_effective_log_prob).mean()
             policy_loss = ((loss.detach() - self.baselines['loss'].predict(loss.detach())) * s_effective_log_prob).mean()
-            weighted_entropy = s_effective_entropy.mean() * self.entropy_coef
+            weighted_entropy = s_effective_entropy.mean()
 
             optimized_loss = policy_length_loss + policy_loss - weighted_entropy
             # if the receiver is deterministic/differentiable, we apply the actual loss
@@ -391,12 +394,19 @@ class PPOReinforceAlgo(BaseECAlgo):
             # optimize
             self.s_optimizer.zero_grad()
             optimized_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.speaker.parameters(), self.max_grad_norm)
+            grad_norm = sum(p.grad.data.norm(2) ** 2 for p in self.speaker.parameters() if p.grad is not None) ** 0.5
+            torch.nn.utils.clip_grad_norm_(self.speaker.parameters(), self.s_max_grad_norm)
             self.s_optimizer.step()
 
             # update baselines
             self.baselines['loss'].update(loss)
             self.baselines['length'].update(length_loss)
+
+            # log some values
+            logs["s_policy_loss"] = policy_loss
+            logs["s_entropy"] = weighted_entropy
+            logs["s_optimized_loss"] = optimized_loss
+            logs["s_grad_norm"] = grad_norm.item()
 
         # update listener
         for _ in range(self.epochs):

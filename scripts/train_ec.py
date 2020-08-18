@@ -142,7 +142,8 @@ def main():
               + ["return_" + stat for stat in ['mean', 'std', 'min', 'max']]
               + ["success_rate"]
               + ["num_frames_" + stat for stat in ['mean', 'std', 'min', 'max']]
-              + ["entropy", "value", "policy_loss", "value_loss", "loss", "grad_norm"])
+              + ["entropy", "value", "policy_loss", "value_loss", "loss", "grad_norm"]
+              + ["s_policy_loss", "s_entropy", "s_loss", "s_grad_norm"])
     if args.tb:
         from tensorboardX import SummaryWriter
         writer = SummaryWriter(utils.get_log_dir(args.model))
@@ -208,11 +209,14 @@ def main():
                     success_per_episode['mean'],
                     *num_frames_per_episode.values(),
                     logs["entropy"], logs["value"], logs["policy_loss"], logs["value_loss"],
-                    logs["loss"], logs["grad_norm"]]
+                    logs["loss"], logs["grad_norm"],
+                    logs["s_policy_loss"], logs["s_entropy"], logs["s_optimized_loss"], logs["s_grad_norm"]
+                    ]
 
             format_str = ("U {} | E {} | F {:06} | FPS {:04.0f} | D {} | R:xsmM {: .2f} {: .2f} {: .2f} {: .2f} | "
                           "S {:.2f} | F:xsmM {:.1f} {:.1f} {} {} | H {:.3f} | V {:.3f} | "
-                          "pL {: .3f} | vL {:.3f} | L {:.3f} | gN {:.3f} | ")
+                          "pL {:.3f} | vL {:.3f} | L {:.3f} | gN {:.3f} | "
+                          "s_pL {:.3f} | s_H {:.3f} | s_L {:.3f} | s_gN {:.3f} | ")
 
             logger.info(format_str.format(*data))
             if args.tb:
