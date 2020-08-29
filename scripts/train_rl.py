@@ -14,6 +14,7 @@ import datetime
 import torch
 import numpy as np
 import subprocess
+import warnings
 
 import babyai
 import babyai.utils as utils
@@ -22,6 +23,11 @@ from babyai.arguments import ArgumentParser
 from babyai.model import ACModel, ACModelImgInstr
 from babyai.evaluate import batch_evaluate
 from babyai.utils.agent import ModelAgent
+
+
+
+warnings.filterwarnings(action='ignore')
+
 
 # Parse arguments
 parser = ArgumentParser()
@@ -54,7 +60,7 @@ def main():
     for i in range(args.procs):
         env = gym.make(args.env)
         # [adjust]
-        env = utils.FullyObsWrapper(env)
+        # env = utils.FullyObsWrapper(env)
         env.seed(100 * args.seed + i)
         envs.append(env)
 
@@ -74,7 +80,7 @@ def main():
         'suffix': suffix}
     default_model_name = "{env}_{algo}_{arch}_{instr}_{mem}_seed{seed}{info}{coef}_{suffix}".format(**model_name_parts)
     if args.pretrained_model:
-        default_model_name = args.pretrained_model + '_pretrained_' + default_model_name
+        default_model_name = default_model_name + '_PretrainedWith_' + args.pretrained_model
     args.model = args.model.format(**model_name_parts) if args.model else default_model_name
 
     utils.configure_logging(args.model)

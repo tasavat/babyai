@@ -166,7 +166,7 @@ class BaseECAlgo(ABC):
                 entropy = model_results['entropy']
 
                 self.message = message
-                # # dummy message
+                # [dummy]
                 # self.message = torch.zeros_like(message)
 
                 self.message_logit = logits
@@ -382,20 +382,22 @@ class PPOReinforceAlgo(BaseECAlgo):
                 s_effective_entropy += s_entropy[:, i] * not_eosed
                 s_effective_log_prob += s_log_prob[:, i] * not_eosed
             s_effective_entropy = s_effective_entropy / message_length.float()
+            s_effective_log_prob = s_effective_log_prob / message_length.float()
 
             policy_length_loss = ((length_loss - self.baselines['length'].predict(length_loss)) * s_effective_log_prob).mean()
             policy_loss = ((loss.detach() - self.baselines['loss'].predict(loss.detach())) * s_effective_log_prob).mean()
             weighted_entropy = s_effective_entropy.mean()
 
             optimized_loss = policy_length_loss + policy_loss - weighted_entropy
+            """
             # if the receiver is deterministic/differentiable, we apply the actual loss
             optimized_loss += loss.mean()
-
+            """
             # optimize
             self.s_optimizer.zero_grad()
             optimized_loss.backward()
             grad_norm = sum(p.grad.data.norm(2) ** 2 for p in self.speaker.parameters() if p.grad is not None) ** 0.5
-            torch.nn.utils.clip_grad_norm_(self.speaker.parameters(), self.s_max_grad_norm)
+            # torch.nn.utils.clip_grad_norm_(self.speaker.parameters(), self.s_max_grad_norm)
             self.s_optimizer.step()
 
             # update baselines

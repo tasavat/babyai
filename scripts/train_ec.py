@@ -49,16 +49,25 @@ parser.add_argument("--suffix", type=str, default=None,
                     help="suffix to model's name (default: None)")
 parser.add_argument("--speaker_pretrained_model", type=str, default=None,
                     help="path to speaker pretrained model (default: None)")
+parser.add_argument("--speaker_grid_type", type=str, default="full",
+                    help="grid type: 'full' or 'partial' (default: full)")
+parser.add_argument("--listener_grid_type", type=str, default="partial",
+                    help="grid type: 'full' or 'partial' (default: partial)")
+parser.add_argument("--episodes", type=int, default=1000000,
+                    help="number of training episodes (default: 1000k)")
 args = parser.parse_args()
 
 utils.seed(args.seed)
 
 
 def main():
+    # check environment names
+    env_names = args.env.split("_")
+    env_num = len(env_names)
     # Generate environments
     envs = []
     for i in range(args.procs):
-        env = gym.make(args.env)
+        env = gym.make(env_names[i // (args.procs//env_num)])
         env = utils.FullyObsWrapper(env)
         env.seed(100 * args.seed + i)
         envs.append(env)
@@ -82,15 +91,15 @@ def main():
     }
     default_model_name = "{env}_{algo}_{arch}_{instr}_{mem}_seed{seed}{info}{coef}_V{vocab_size}_L{max_len}_{suffix}".format(**model_name_parts)
     if args.pretrained_model:
-        default_model_name = args.pretrained_model + '_pretrained_' + default_model_name
+        default_model_name = default_model_name + '_PretrainedWith_' + args.pretrained_model
     args.model = args.model.format(**model_name_parts) if args.model else default_model_name
 
     utils.configure_logging(args.model)
     logger = logging.getLogger(__name__)
 
     # Define obss preprocessor
-    speaker_obss_preprocessor = utils.SpeakerObssPreprocessor(args.model)
-    listener_obss_preprocessor = utils.ListenerObssPreprocessor(args.model)
+    speaker_obss_preprocessor = utils.SpeakerObssPreprocessor(args.model, grid_type=args.speaker_grid_type)
+    listener_obss_preprocessor = utils.ListenerObssPreprocessor(args.model, grid_type=args.listener_grid_type)
 
     # Define actor-critic model
     speaker, listener = utils.load_ec_model(args.model, raise_not_found=False)
@@ -183,7 +192,12 @@ def main():
     best_success_rate = 0
     best_mean_return = 0
     test_env_name = args.env
-    while status['num_frames'] < args.frames:
+
+    consecutive_success = 0
+    success_rate_criteria = 0.95
+
+    # while status['num_episodes'] < args.episodes:
+    while (status['num_episodes'] < args.episodes) and (consecutive_success < 3):
         # Update parameters
         update_start_time = time.time()
         logs = algo.update_parameters()
@@ -232,28 +246,12 @@ def main():
                 json.dump(status, dst)
                 utils.save_ec_model(speaker, listener, args.model)
 
-            """
-            # Testing the model before saving
-            agent = ModelAgent(args.model, obss_preprocessor, argmax=True)
-            agent.model = acmodel
-            agent.model.eval()
-            logs = batch_evaluate(agent, test_env_name, args.val_seed, args.val_episodes)
-            agent.model.train()
-            mean_return = np.mean(logs["return_per_episode"])
-            success_rate = np.mean([1 if r > 0 else 0 for r in logs['return_per_episode']])
-            save_model = False
-            if success_rate > best_success_rate:
-                best_success_rate = success_rate
-                save_model = True
-            elif (success_rate == best_success_rate) and (mean_return > best_mean_return):
-                best_mean_return = mean_return
-                save_model = True
-            if save_model:
-                utils.save_model(acmodel, args.model + '_best')
-                logger.info("Return {: .2f}; best model is saved".format(mean_return))
-            else:
-                logger.info("Return {: .2f}; not the best model; not saved".format(mean_return))
-        """
+        # update consecutive success
+        success_per_episode = utils.synthesize([1 if r > 0 else 0 for r in logs["return_per_episode"]])
+        if success_per_episode['mean'] >= success_rate_criteria:
+            consecutive_success += 1
+        else:
+            consecutive_success = 0
 
 
 if __name__ == "__main__":

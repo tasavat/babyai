@@ -122,6 +122,29 @@ class Level_GoToLocal(RoomGridLevel):
         self.check_objs_reachable()
         obj = self._rand_elem(objs)
         self.instrs = GoToInstr(ObjDesc(obj.type, obj.color))
+        
+
+class Level_GoToLocalTemplate(RoomGridLevel):
+    """
+    Go to an object, inside a single room with no doors, no distractors
+    Force strict to false
+    """
+
+    def __init__(self, room_size=8, num_dists=8, seed=None):
+        self.num_dists = num_dists
+        super().__init__(
+            num_rows=1,
+            num_cols=1,
+            room_size=room_size,
+            seed=seed
+        )
+
+    def gen_mission(self):
+        self.place_agent()
+        objs = self.add_distractors(num_distractors=self.num_dists, all_unique=False)
+        self.check_objs_reachable()
+        obj = self._rand_elem(objs)
+        self.instrs = GoToInstr(ObjDesc(obj.type, obj.color), strict=False)
 
 
 class Level_GoToLocalS5N2(Level_GoToLocal):
@@ -211,6 +234,35 @@ class Level_PutNextLocal(RoomGridLevel):
         )
 
 
+class Level_PutNextLocal(RoomGridLevel):
+    """
+    Put an object next to another object, inside a single room
+    with no doors, no distractors
+    Force strict to false
+    """
+
+    def __init__(self, room_size=8, num_objs=8, seed=None):
+        self.num_objs = num_objs
+        super().__init__(
+            num_rows=1,
+            num_cols=1,
+            room_size=room_size,
+            seed=seed
+        )
+
+    def gen_mission(self):
+        self.place_agent()
+        objs = self.add_distractors(num_distractors=self.num_objs, all_unique=True)
+        self.check_objs_reachable()
+        o1, o2 = self._rand_subset(objs, 2)
+
+        self.instrs = PutNextInstr(
+            ObjDesc(o1.type, o1.color),
+            ObjDesc(o2.type, o2.color),
+            strict=False
+        )
+
+        
 class Level_PutNextLocalS5N3(Level_PutNextLocal):
     def __init__(self, seed=None):
         super().__init__(room_size=5, num_objs=3, seed=seed)
@@ -513,6 +565,36 @@ class Level_PickupLoc(LevelGen):
             locations=True,
             unblocking=False
         )
+        
+
+class Level_PickupLocTemplate(LevelGen):
+    """
+    Pick up an object which may be described using its location. This is a
+    single room environment.
+
+    Competencies: PickUp, Loc. No unblocking.
+    
+    Force strict to false
+    """
+
+    def __init__(self, seed=None):
+        # We add many distractors to increase the probability
+        # of ambiguous locations within the same room
+        super().__init__(
+            seed=seed,
+            action_kinds=['pickup'],
+            instr_kinds=['action'],
+            num_rows=1,
+            num_cols=1,
+            num_dists=8,
+            locked_room_prob=0,
+            locations=True,
+            unblocking=False
+        )
+    
+    def gen_mission(self):
+        super().gen_mission()
+        self.instrs = PickupInstr(self.rand_obj(types=OBJ_TYPES_NOT_DOOR), strict=False)
 
 
 class Level_GoToSeq(LevelGen):

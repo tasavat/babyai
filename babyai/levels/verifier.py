@@ -280,9 +280,10 @@ class GoToInstr(ActionInstr):
     eg: go to the door
     """
 
-    def __init__(self, obj_desc):
+    def __init__(self, obj_desc, strict=True):
         super().__init__()
         self.desc = obj_desc
+        self.strict = strict
 
     def surface(self, env):
         return 'go to ' + self.desc.surface(env)
@@ -294,12 +295,20 @@ class GoToInstr(ActionInstr):
         self.desc.find_matching_objs(env)
 
     def verify_action(self, action):
-        # For each object position
-        for pos in self.desc.obj_poss:
-            # If the agent is next to (and facing) the object
-            if np.array_equal(pos, self.env.front_pos):
-                return 'success'
-
+        if self.strict:
+            if action == self.env.actions.done:
+                # For each object position
+                for pos in self.desc.obj_poss:
+                    # If the agent is next to (and facing) the object
+                    if np.array_equal(pos, self.env.front_pos):
+                        return 'success'
+                return 'failure'
+        else:
+            # For each object position
+            for pos in self.desc.obj_poss:
+                # If the agent is next to (and facing) the object
+                if np.array_equal(pos, self.env.front_pos):
+                    return 'success'            
         return 'continue'
 
 
@@ -309,7 +318,7 @@ class PickupInstr(ActionInstr):
     eg: pick up the grey ball
     """
 
-    def __init__(self, obj_desc, strict=False):
+    def __init__(self, obj_desc, strict=True):
         super().__init__()
         assert obj_desc.type is not 'door'
         self.desc = obj_desc
@@ -356,7 +365,7 @@ class PutNextInstr(ActionInstr):
     eg: put the red ball next to the blue key
     """
 
-    def __init__(self, obj_move, obj_fixed, strict=False):
+    def __init__(self, obj_move, obj_fixed, strict=True):
         super().__init__()
         assert obj_move.type is not 'door'
         self.desc_move = obj_move

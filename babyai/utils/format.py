@@ -19,13 +19,16 @@ def get_vocab_path(model_name):
 
 def get_simulated_env(model_name):
     env_name = model_name.split("_")[0]
+    env_name_parts = env_name.split("-")
+    # use Template version of environment (strict=False)
+    env_name = env_name_parts[0] + "-" + env_name_parts[1] + "Template" + "-" + env_name_parts[2]
     env = gym.make(env_name)
     return env
 
 
 def get_pretrained_agent(model_name):
     env_name = model_name.split("_")[0]
-    pretrained_model_name = env_name + "_pretrained"
+    pretrained_model_name = env_name + "_template"
     model = utils.load_model(pretrained_model_name, raise_not_found=True)
     if not model:
         raise FileNotFoundError(f"Model not found: {pretrained_model_name}")
@@ -34,7 +37,7 @@ def get_pretrained_agent(model_name):
 
 def get_preprocessed_obs(model_name, obs_space):
     env_name = model_name.split("_")[0]
-    pretrained_model_name = env_name + "_pretrained"
+    pretrained_model_name = env_name + "_template"
     obss_preprocessor = utils.ObssPreprocessor(pretrained_model_name, obs_space)
     return obss_preprocessor
 
@@ -143,6 +146,7 @@ class ImgInstrPreprocessor(object):
             img_instrs.append(img_instr)
 
         img_instrs = torch.stack(img_instrs, dim=0)
+        
         return img_instrs
 
     def _full_obs(self):
@@ -194,13 +198,19 @@ class ImgInstrPreprocessor(object):
                 patience_cnt += 1
 
         img_instr = torch.tensor(img_instr, device=device, dtype=torch.float)
-        img_instr = torch.reshape(img_instr, (-1, img_instr.size()[1], img_instr.size()[2]))
+        img_instr = torch.reshape(img_instr, (img_instr.size()[1], img_instr.size()[2], -1))
         return img_instr
 
 
 class RawImagePreprocessor(object):
+    def __init__(self, grid_type=None):
+        self.grid_type = grid_type
+
     def __call__(self, obss, device=None):
-        images = numpy.array([obs["image"] for obs in obss])
+        if self.grid_type is None:
+            images = numpy.array([obs["image"] for obs in obss])
+        else:
+            images = numpy.array([obs[f"image_{self.grid_type}"] for obs in obss])
         images = torch.tensor(images, device=device, dtype=torch.float)
         return images
 
@@ -267,12 +277,12 @@ class IntObssPreprocessor(object):
 
 
 class ImgInstrObssPreprocessor(object):
-    def __init__(self, model_name, obs_space=None, load_vocab_from=None):
-        self.image_preproc = RawImagePreprocessor()
+    def __init__(self, model_name, obs_space=None, load_vocab_from=None, grid_type=None):
+        self.image_preproc = RawImagePreprocessor(grid_type=grid_type)
         self.instr_preproc = ImgInstrPreprocessor(model_name, obs_space)
         self.obs_space = {
-            "image": 147,
-            "instr": None,
+            "image": 8*8*3 if grid_type == 'full' else 7*7*3,
+            "instr": 100,
         }
 
     def __call__(self, obss, device=None):
@@ -288,20 +298,16 @@ class ImgInstrObssPreprocessor(object):
 
 
 class SpeakerObssPreprocessor(ImgInstrObssPreprocessor):
-    def __init__(self, model_name):
-        super().__init__(model_name)
-        self.obs_spac = {
-            "image": 8*8*3,
-            "instr": None
-        }
+    def __init__(self, model_name, grid_type=None):
+        super().__init__(model_name, grid_type=grid_type)
 
 
 class ListenerObssPreprocessor(object):
-    def __init__(self, model_name):
-        self.image_preproc = RawImagePreprocessor()
+    def __init__(self, model_name, grid_type=None):
+        self.image_preproc = RawImagePreprocessor(grid_type=grid_type)
         self.obs_space = {
-            "image": 8*8*3,
-            "instr": 100  # arbitrary max vocab size
+            "image": 8*8*3 if grid_type == 'full' else 7*7*3,
+            "instr": 100,
         }
 
     def __call__(self, obss, messages=None, device=None):

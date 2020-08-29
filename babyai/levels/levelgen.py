@@ -55,7 +55,7 @@ class RoomGridLevel(RoomGrid):
 
     def step(self, action):
         obs, reward, done, info = super().step(action)
-        obs['id'] = id
+        obs['id'] = self.id
 
         # If we drop an object, we need to update its position in the environment
         if action == self.actions.drop:
@@ -285,7 +285,7 @@ class LevelGen(RoomGridLevel):
         implicit_unlock=True,
         action_kinds=['goto', 'pickup', 'open', 'putnext'],
         instr_kinds=['action', 'and', 'seq'],
-        seed=None
+        seed=None,
     ):
         self.num_dists = num_dists
         self.locked_room_prob = locked_room_prob

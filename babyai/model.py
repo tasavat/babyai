@@ -355,12 +355,14 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
         # Define instruction embedding
         if self.use_instr:
             self.instr_cnn = nn.Sequential(
-                nn.Conv2d(in_channels=3*2, out_channels=16, kernel_size=(3, 3)),
+                nn.Conv2d(in_channels=3*2, out_channels=128, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(2, 2)),
                 nn.ReLU(),
                 nn.MaxPool2d(kernel_size=(2, 2), stride=2),
-                nn.Conv2d(in_channels=16, out_channels=32, kernel_size=(2, 2)),
+                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(2, 2)),
                 nn.ReLU(),
-                nn.Conv2d(in_channels=32, out_channels=image_dim, kernel_size=(2, 2)),
+                nn.Conv2d(in_channels=128, out_channels=image_dim, kernel_size=(2, 2)),
                 nn.ReLU(),
                 nn.Flatten(),
                 nn.Linear(image_dim, instr_dim),
@@ -461,10 +463,12 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
     def semi_memory_size(self):
         return self.memory_dim
 
-    def forward(self, obs, memory, instr_embedding=None, inject_dummy=False):
+    def forward(self, obs, memory, instr_embedding=None):
         if self.use_instr and instr_embedding is None:
-            # instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=inject_dummy)
-            instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=True)
+            instr = torch.transpose(torch.transpose(obs.instr, 1, 3), 2, 3)
+            instr_embedding = self._get_instr_embedding(instr, inject_dummy=False)
+            # [dummy]
+            # instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=True)
 
         x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
 
@@ -557,9 +561,10 @@ class SpeakerModel(ACModelImgInstr):
         model_dict.update(pretrained_dict)
         self.load_state_dict(model_dict)
 
-    def forward(self, obs, memory, instr_embedding=None, inject_dummy=False):
+    def forward(self, obs, memory, instr_embedding=None):
         if self.use_instr and instr_embedding is None:
-            instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=inject_dummy)
+            instr = torch.transpose(torch.transpose(obs.instr, 1, 3), 2, 3)
+            instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=False)
 
         x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
 
