@@ -21,6 +21,7 @@ from babyai.model import SpeakerModel, ListenerModel
 from babyai.evaluate import batch_evaluate
 from babyai.utils.agent import ModelAgent
 
+
 # Parse arguments
 parser = ArgumentParser()
 parser.add_argument("--algo", default='ppo_reinforce',
@@ -49,8 +50,8 @@ parser.add_argument("--suffix", type=str, default=None,
                     help="suffix to model's name (default: None)")
 parser.add_argument("--speaker_pretrained_model", type=str, default=None,
                     help="path to speaker pretrained model (default: None)")
-parser.add_argument("--speaker_grid_type", type=str, default="full",
-                    help="grid type: 'full' or 'partial' (default: full)")
+parser.add_argument("--speaker_grid_type", type=str, default="partial",
+                    help="grid type: 'full' or 'partial' (default: partial)")
 parser.add_argument("--listener_grid_type", type=str, default="partial",
                     help="grid type: 'full' or 'partial' (default: partial)")
 parser.add_argument("--episodes", type=int, default=1000000,
@@ -196,8 +197,9 @@ def main():
     consecutive_success = 0
     success_rate_criteria = 0.95
 
-    # while status['num_episodes'] < args.episodes:
-    while (status['num_episodes'] < args.episodes) and (consecutive_success < 3):
+    # [adjust]
+    while consecutive_success < 3:
+    # while (status['num_episodes'] < args.episodes) and (consecutive_success < 3):
         # Update parameters
         update_start_time = time.time()
         logs = algo.update_parameters()

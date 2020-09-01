@@ -71,7 +71,7 @@ class Vocabulary:
 
 class ImageInstructionDict:
     def __init__(self):
-        self.max_size = 256
+        self.max_size = 100
         self.id_cache = deque(maxlen=self.max_size)
         self.img_instr = {}  # reset id cache every time training restarts
 
@@ -137,12 +137,14 @@ class ImgInstrPreprocessor(object):
         img_instrs = []
         for obs in obss:
             # retrieve image instruction from cache by env id
-            if obs['id'] in self.img_instr_dict.img_instr.keys():
-                img_instr = self.img_instr_dict[obs['id']]
+            if obs['mission'] in self.img_instr_dict.img_instr.keys():
+                img_instr = self.img_instr_dict[obs['mission']]
             # generate new image instruction with pretrained agent
             else:
-                img_instr = self._generate_img_instr(obs, device=device)
-                self.img_instr_dict[obs['id']] = img_instr
+                # [adjust]
+                # img_instr = self._generate_img_instr(obs, device=device)
+                img_instr = self._load_prerendered_img_instr(obs, device=device)
+                self.img_instr_dict[obs['mission']] = img_instr
             img_instrs.append(img_instr)
 
         img_instrs = torch.stack(img_instrs, dim=0)
@@ -151,7 +153,7 @@ class ImgInstrPreprocessor(object):
 
     def _full_obs(self):
         full_obs = self.simulated_env.grid.encode()
-        full_obs[self.simulated_env.agent_pos[0]][self.simulated_env.agent_pos[0]] = numpy.array([
+        full_obs[self.simulated_env.agent_pos[0]][self.simulated_env.agent_pos[1]] = numpy.array([
             10,
             0,
             self.simulated_env.agent_dir
@@ -201,7 +203,14 @@ class ImgInstrPreprocessor(object):
         img_instr = torch.reshape(img_instr, (img_instr.size()[1], img_instr.size()[2], -1))
         return img_instr
 
-
+    def _load_prerendered_img_instr(self, obs, device=None):
+        mission = obs["mission"]
+        img_instr = numpy.load(f"instruction_images/{mission}.npy")
+        img_instr = torch.tensor(img_instr, device=device, dtype=torch.float)
+        return img_instr
+        
+    
+    
 class RawImagePreprocessor(object):
     def __init__(self, grid_type=None):
         self.grid_type = grid_type

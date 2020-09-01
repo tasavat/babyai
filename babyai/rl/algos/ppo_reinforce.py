@@ -318,7 +318,7 @@ class PPOReinforceAlgo(BaseECAlgo):
                  entropy_coef=0.01, value_loss_coef=0.5, max_grad_norm=0.5, recurrence=4,
                  adam_eps=1e-5, clip_eps=0.2, epochs=4, batch_size=256,
                  s_preprocess_obss=None, l_preprocess_obss=None, reshape_reward=None, aux_info=None,
-                 s_lr=1e-3, s_max_grad_norm=1):
+                 s_lr=1e-3, s_entropy_coef=10, s_max_grad_norm=1):
         num_frames_per_proc = num_frames_per_proc or 128
 
         super().__init__(envs, speaker, listener,
@@ -338,6 +338,7 @@ class PPOReinforceAlgo(BaseECAlgo):
 
         self.baselines = defaultdict(MeanBaseline)
         self.length_cost = 0
+        self.s_entropy_coef = s_entropy_coef
         self.s_max_grad_norm = s_max_grad_norm
 
     def update_parameters(self):
@@ -386,7 +387,7 @@ class PPOReinforceAlgo(BaseECAlgo):
 
             policy_length_loss = ((length_loss - self.baselines['length'].predict(length_loss)) * s_effective_log_prob).mean()
             policy_loss = ((loss.detach() - self.baselines['loss'].predict(loss.detach())) * s_effective_log_prob).mean()
-            weighted_entropy = s_effective_entropy.mean()
+            weighted_entropy = self.s_entropy_coef * s_effective_entropy.mean()
 
             optimized_loss = policy_length_loss + policy_loss - weighted_entropy
             """

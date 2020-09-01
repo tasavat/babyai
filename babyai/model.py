@@ -236,6 +236,7 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
                 x = controler(x, instr_embedding)
             x = F.relu(self.film_pool(x))
         else:
+            x = x.contiguous()
             x = self.image_conv(x)
 
         x = x.reshape(x.shape[0], -1)
@@ -355,18 +356,22 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
         # Define instruction embedding
         if self.use_instr:
             self.instr_cnn = nn.Sequential(
-                nn.Conv2d(in_channels=3*2, out_channels=128, kernel_size=(2, 2)),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(2, 2)),
+                nn.Conv2d(in_channels=3, out_channels=16, kernel_size=(3, 3)),
                 nn.ReLU(),
                 nn.MaxPool2d(kernel_size=(2, 2), stride=2),
-                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(2, 2)),
+                nn.Conv2d(in_channels=16, out_channels=32, kernel_size=(2, 2)),
                 nn.ReLU(),
-                nn.Conv2d(in_channels=128, out_channels=image_dim, kernel_size=(2, 2)),
+                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
+                nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(2, 2)),
                 nn.ReLU(),
+                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
+                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
                 nn.Flatten(),
-                nn.Linear(image_dim, instr_dim),
+                nn.Linear(128*3*3, instr_dim),
             )
+            self.instr_rnn = nn.GRU(image_dim, instr_dim, batch_first=True)
             self.final_instr_dim = self.instr_dim
 
         # Define memory
@@ -465,7 +470,7 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
 
     def forward(self, obs, memory, instr_embedding=None):
         if self.use_instr and instr_embedding is None:
-            instr = torch.transpose(torch.transpose(obs.instr, 1, 3), 2, 3)
+            instr = torch.transpose(torch.transpose(obs.instr, 2, 4), 3, 4)
             instr_embedding = self._get_instr_embedding(instr, inject_dummy=False)
             # [dummy]
             # instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=True)
@@ -478,6 +483,7 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
                 x = controller(x, instr_embedding)
             x = F.relu(self.film_pool(x))
         else:
+            x = x.contiguous()
             x = self.image_conv(x)
 
         x = x.reshape(x.shape[0], -1)
@@ -507,9 +513,18 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
 
     def _get_instr_embedding(self, instr, inject_dummy=False):
-        instr_embedding = self.instr_cnn(instr)
+        # instr_embedding = self.instr_cnn(instr)
+        
+        batch_size, timesteps, C, H, W = instr.size()
+        cnn_in = instr.view(batch_size * timesteps, C, H, W).contiguous()
+        cnn_out = self.instr_cnn(cnn_in)
+        rnn_in = cnn_out.view(batch_size, timesteps, -1)
+        _, rnn_out = self.instr_rnn(rnn_in)
+        instr_embedding = torch.squeeze(rnn_out)
+        
         if inject_dummy:
             instr_embedding = torch.zeros_like(instr_embedding)
+            
         return instr_embedding
 
 
@@ -563,8 +578,8 @@ class SpeakerModel(ACModelImgInstr):
 
     def forward(self, obs, memory, instr_embedding=None):
         if self.use_instr and instr_embedding is None:
-            instr = torch.transpose(torch.transpose(obs.instr, 1, 3), 2, 3)
-            instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=False)
+            instr = torch.transpose(torch.transpose(obs.instr, 2, 4), 3, 4)
+            instr_embedding = self._get_instr_embedding(instr, inject_dummy=False)
 
         x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
 

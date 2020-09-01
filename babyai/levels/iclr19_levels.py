@@ -234,7 +234,7 @@ class Level_PutNextLocal(RoomGridLevel):
         )
 
 
-class Level_PutNextLocal(RoomGridLevel):
+class Level_PutNextLocalTemplate(RoomGridLevel):
     """
     Put an object next to another object, inside a single room
     with no doors, no distractors
