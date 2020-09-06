@@ -30,7 +30,7 @@ class FullyObsWrapper(ObservationWrapper):
         return {
             'id': obs['id'],
             'mission': obs['mission'],
-            'image': full_grid,
+            'image': obs['image'],
             'image_full': full_grid,
             'image_partial': obs['image']
         }

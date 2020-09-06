@@ -142,8 +142,8 @@ class ImgInstrPreprocessor(object):
             # generate new image instruction with pretrained agent
             else:
                 # [adjust]
-                # img_instr = self._generate_img_instr(obs, device=device)
-                img_instr = self._load_prerendered_img_instr(obs, device=device)
+                img_instr = self._generate_img_instr(obs, device=device)
+                # img_instr = self._load_prerendered_img_instr(obs, device=device)
                 self.img_instr_dict[obs['mission']] = img_instr
             img_instrs.append(img_instr)
 
@@ -153,12 +153,25 @@ class ImgInstrPreprocessor(object):
 
     def _full_obs(self):
         full_obs = self.simulated_env.grid.encode()
+        
+        # numeric encoding
         full_obs[self.simulated_env.agent_pos[0]][self.simulated_env.agent_pos[1]] = numpy.array([
             10,
             0,
             self.simulated_env.agent_dir
         ])
-        return full_obs
+        
+        # one-hot encoding
+        full_obs_oh = numpy.zeros((full_obs.shape[0], full_obs.shape[1], 21))
+        channel_start_index = {0: 0, 1:11, 2:17}
+        
+        for x in range(full_obs.shape[0]):
+            for y in range(full_obs.shape[1]):
+                for ch in range(full_obs.shape[2]):
+                    value = full_obs[x][y][ch]
+                    full_obs_oh[x][y][channel_start_index[ch] + value] = 1
+        
+        return full_obs_oh
 
     def _generate_img_instr(self, obs, device=None):
         # retrieve mission
@@ -200,7 +213,7 @@ class ImgInstrPreprocessor(object):
                 patience_cnt += 1
 
         img_instr = torch.tensor(img_instr, device=device, dtype=torch.float)
-        img_instr = torch.reshape(img_instr, (img_instr.size()[1], img_instr.size()[2], -1))
+        img_instr = torch.reshape(img_instr, (2, img_instr.size()[1], img_instr.size()[2], 21))
         return img_instr
 
     def _load_prerendered_img_instr(self, obs, device=None):

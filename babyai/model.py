@@ -355,6 +355,8 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
 
         # Define instruction embedding
         if self.use_instr:
+            # [adjust] for RGB image
+            """
             self.instr_cnn = nn.Sequential(
                 nn.Conv2d(in_channels=3, out_channels=16, kernel_size=(3, 3)),
                 nn.ReLU(),
@@ -370,6 +372,21 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
                 nn.MaxPool2d(kernel_size=(2, 2), stride=2),
                 nn.Flatten(),
                 nn.Linear(128*3*3, instr_dim),
+            )
+            """
+            # [adjust] for grid encoding
+            self.instr_cnn = nn.Sequential(
+                nn.Conv2d(in_channels=21, out_channels=128, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
+                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Flatten(),
+                nn.Linear(128, instr_dim),
             )
             self.instr_rnn = nn.GRU(image_dim, instr_dim, batch_first=True)
             self.final_instr_dim = self.instr_dim
