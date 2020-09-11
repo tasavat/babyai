@@ -138,8 +138,8 @@ class ImgInstrPreprocessor(object):
             # generate new image instruction with pretrained agent
             else:
                 # [adjust]
-                # img_instr = self._generate_img_instr(obs, device=device)
-                img_instr = self._load_prerendered_img_instr(obs, device=device)
+                img_instr = self._generate_img_instr(obs, device=device)
+                # img_instr = self._load_prerendered_img_instr(obs, device=device)
                 self.img_instr_dict[cache_id] = img_instr
             img_instrs.append(img_instr)
             
