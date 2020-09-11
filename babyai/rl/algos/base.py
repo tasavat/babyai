@@ -226,8 +226,8 @@ class BaseAlgo(ABC):
             exps = self.aux_info_collector.end_collection(exps)
 
         # Preprocess experiences
-
-        exps.obs = self.preprocess_obss(exps.obs, device=self.device)
+        # exps.obs = self.preprocess_obss(exps.obs, device=self.device)
+        exps.obs = self.preprocess_obss(exps.obs, device=self.device, set_clear_cache=True)
 
         # Log some values
 

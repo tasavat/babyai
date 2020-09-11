@@ -23,8 +23,8 @@ class ArgumentParser(argparse.ArgumentParser):
                             help="random seed; if 0, a random random seed will be used  (default: 1)")
         self.add_argument("--task-id-seed", action='store_true',
                             help="use the task id within a Slurm job array as the seed")
-        self.add_argument("--procs", type=int, default=32,
-                            help="number of processes (default: 32)")
+        self.add_argument("--procs", type=int, default=64,
+                            help="number of processes (default: 64)")
         self.add_argument("--tb", action="store_true", default=False,
                             help="log into Tensorboard")
 

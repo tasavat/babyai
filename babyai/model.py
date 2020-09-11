@@ -489,8 +489,6 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
         if self.use_instr and instr_embedding is None:
             instr = torch.transpose(torch.transpose(obs.instr, 2, 4), 3, 4)
             instr_embedding = self._get_instr_embedding(instr, inject_dummy=False)
-            # [dummy]
-            # instr_embedding = self._get_instr_embedding(obs.instr, inject_dummy=True)
 
         x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
 
@@ -529,9 +527,7 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
 
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
 
-    def _get_instr_embedding(self, instr, inject_dummy=False):
-        # instr_embedding = self.instr_cnn(instr)
-        
+    def _get_instr_embedding(self, instr, inject_dummy=False):       
         batch_size, timesteps, C, H, W = instr.size()
         cnn_in = instr.view(batch_size * timesteps, C, H, W).contiguous()
         cnn_out = self.instr_cnn(cnn_in)

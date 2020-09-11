@@ -238,6 +238,7 @@ def main():
                 json.dump(status, dst)
                 utils.save_model(acmodel, args.model)
 
+            """
             # Testing the model before saving
             agent = ModelAgent(args.model, obss_preprocessor, argmax=True)
             agent.model = acmodel
@@ -260,6 +261,7 @@ def main():
                 logger.info("Return {: .2f}; best model is saved".format(mean_return))
             else:
                 logger.info("Return {: .2f}; not the best model; not saved".format(mean_return))
+            """
 
 
 if __name__ == "__main__":

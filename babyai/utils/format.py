@@ -71,8 +71,6 @@ class Vocabulary:
 
 class ImageInstructionDict:
     def __init__(self):
-        self.max_size = 100
-        self.id_cache = deque(maxlen=self.max_size)
         self.img_instr = {}  # reset id cache every time training restarts
 
     def __getitem__(self, id):
@@ -81,13 +79,7 @@ class ImageInstructionDict:
         return None
 
     def __setitem__(self, id, img_list):
-        self.id_cache.append(id)
         self.img_instr[id] = img_list
-        # remove old ids
-        while len(self.id_cache) > self.max_size:
-            remove_id = self.id_cache.popleft()
-            if remove_id in self.img_instr.keys():
-                self.img_instr.remove(remove_id)
 
 
 class InstructionsPreprocessor(object):
@@ -127,29 +119,43 @@ class InstructionsPreprocessor(object):
 class ImgInstrPreprocessor(object):
     def __init__(self, model_name, obs_space=None):
         self.img_instr_dict = ImageInstructionDict()
+        self.clear_cache_id = set()
         self.simulated_env = get_simulated_env(model_name)
         self.simulated_obs = None
         self.obss_preprocessor = get_preprocessed_obs(model_name, obs_space)
         self.pretrained_agent = get_pretrained_agent(model_name)
         self.pretrained_agent.eval()
 
-    def __call__(self, obss, device=None):
+    def __call__(self, obss, device=None, set_clear_cache=False):
+        cache_id_set = set()
         img_instrs = []
-        for obs in obss:
+        for i, obs in enumerate(obss):
+            cache_id = obs["id"] + '_' + obs['mission']
+            cache_id_set.add(cache_id)
             # retrieve image instruction from cache by env id
-            if obs['mission'] in self.img_instr_dict.img_instr.keys():
-                img_instr = self.img_instr_dict[obs['mission']]
+            if cache_id in self.img_instr_dict.img_instr.keys():
+                img_instr = self.img_instr_dict[cache_id]
             # generate new image instruction with pretrained agent
             else:
                 # [adjust]
-                img_instr = self._generate_img_instr(obs, device=device)
-                # img_instr = self._load_prerendered_img_instr(obs, device=device)
-                self.img_instr_dict[obs['mission']] = img_instr
+                # img_instr = self._generate_img_instr(obs, device=device)
+                img_instr = self._load_prerendered_img_instr(obs, device=device)
+                self.img_instr_dict[cache_id] = img_instr
             img_instrs.append(img_instr)
+            
+        if set_clear_cache:
+            self.clear_cache_id = self.clear_cache_id - cache_id_set
+            self._clear_cache()
+            self.clear_cache_id.update(cache_id_set)
 
         img_instrs = torch.stack(img_instrs, dim=0)
         
         return img_instrs
+    
+    def _clear_cache(self):
+        for cache_id in self.clear_cache_id:
+            del self.img_instr_dict.img_instr[cache_id]
+        self.clear_cache_id.clear()
 
     def _full_obs(self):
         full_obs = self.simulated_env.grid.encode()
@@ -218,7 +224,8 @@ class ImgInstrPreprocessor(object):
 
     def _load_prerendered_img_instr(self, obs, device=None):
         mission = obs["mission"]
-        img_instr = numpy.load(f"instruction_images/{mission}.npy")
+        random_index = numpy.random.randint(1, 100)
+        img_instr = numpy.load(f"instruction_images/{mission}/{random_index}.npy")
         img_instr = torch.tensor(img_instr, device=device, dtype=torch.float)
         return img_instr
         
@@ -307,14 +314,14 @@ class ImgInstrObssPreprocessor(object):
             "instr": 100,
         }
 
-    def __call__(self, obss, device=None):
+    def __call__(self, obss, device=None, set_clear_cache=False):
         obs_ = babyai.rl.DictList()
 
         if "image" in self.obs_space.keys():
             obs_.image = self.image_preproc(obss, device=device)
 
         if "instr" in self.obs_space.keys():
-            obs_.instr = self.instr_preproc(obss, device=device)
+            obs_.instr = self.instr_preproc(obss, device=device, set_clear_cache=set_clear_cache)
 
         return obs_
 
