@@ -49,7 +49,6 @@ class BaseAlgo(ABC):
             retrieved from the environment for supervised auxiliary losses
         """
         # Store parameters
-
         self.env = ParallelEnv(envs)
         self.acmodel = acmodel
         self.acmodel.train()
@@ -66,7 +65,6 @@ class BaseAlgo(ABC):
         self.aux_info = aux_info
 
         # Store helpers values
-
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_procs = len(envs)
         self.num_frames = self.num_frames_per_proc * self.num_procs
@@ -74,7 +72,6 @@ class BaseAlgo(ABC):
         assert self.num_frames_per_proc % self.recurrence == 0
 
         # Initialize experience values
-
         shape = (self.num_frames_per_proc, self.num_procs)
 
         self.obs = self.env.reset()
@@ -95,7 +92,6 @@ class BaseAlgo(ABC):
             self.aux_info_collector = ExtraInfoCollector(self.aux_info, shape, self.device)
 
         # Initialize log values
-
         self.log_episode_return = torch.zeros(self.num_procs, device=self.device)
         self.log_episode_reshaped_return = torch.zeros(self.num_procs, device=self.device)
         self.log_episode_num_frames = torch.zeros(self.num_procs, device=self.device)
@@ -128,7 +124,6 @@ class BaseAlgo(ABC):
         """
         for i in range(self.num_frames_per_proc):
             # Do one agent-environment interaction
-
             preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
             with torch.no_grad():
                 model_results = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))
@@ -145,7 +140,6 @@ class BaseAlgo(ABC):
                 # env_info = self.process_aux_info(env_info)
 
             # Update experiences values
-
             self.obss[i] = self.obs
             self.obs = obs
 
@@ -169,7 +163,6 @@ class BaseAlgo(ABC):
                 self.aux_info_collector.fill_dictionaries(i, env_info, extra_predictions)
 
             # Update log values
-
             self.log_episode_return += torch.tensor(reward, device=self.device, dtype=torch.float)
             self.log_episode_reshaped_return += self.rewards[i]
             self.log_episode_num_frames += torch.ones(self.num_procs, device=self.device)
@@ -186,7 +179,6 @@ class BaseAlgo(ABC):
             self.log_episode_num_frames *= self.mask
 
         # Add advantage and return to experiences
-
         preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
         with torch.no_grad():
             next_value = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))['value']
@@ -226,11 +218,11 @@ class BaseAlgo(ABC):
             exps = self.aux_info_collector.end_collection(exps)
 
         # Preprocess experiences
+        # [adjust] clear cache
         # exps.obs = self.preprocess_obss(exps.obs, device=self.device)
         exps.obs = self.preprocess_obss(exps.obs, device=self.device, set_clear_cache=True)
 
         # Log some values
-
         keep = max(self.log_done_counter, self.num_procs)
 
         log = {

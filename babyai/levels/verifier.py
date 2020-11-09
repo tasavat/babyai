@@ -352,7 +352,8 @@ class PickupInstr(ActionInstr):
         # If in strict mode and the wrong door object is picked up, failure
         if self.strict:
             if self.env.carrying:
-                return 'failure'
+                return 'continue_with_penalty'
+                # return 'failure'
 
         self.preCarrying = self.env.carrying
 
@@ -365,7 +366,7 @@ class PutNextInstr(ActionInstr):
     eg: put the red ball next to the blue key
     """
 
-    def __init__(self, obj_move, obj_fixed, strict=True):
+    def __init__(self, obj_move, obj_fixed, strict=False):
         super().__init__()
         assert obj_move.type is not 'door'
         self.desc_move = obj_move

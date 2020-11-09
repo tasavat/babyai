@@ -5,7 +5,7 @@ from collections import defaultdict
 
 from babyai.rl.format import default_preprocess_obss
 from babyai.rl.utils import DictList, ParallelEnv
-from babyai.rl.utils.baselines import MeanBaseline
+from babyai.rl.utils.baselines import MeanBaseline, MissionMeanBaseline
 from babyai.rl.utils.supervised_losses import ExtraInfoCollector
 
 
@@ -89,14 +89,16 @@ class BaseECAlgo(ABC):
         self.obs = self.env.reset()
         self.obss = [None]*(shape[0])
 
-        self.message = None
+        self.message = [None]*(shape[1])
         self.messages = []
-        self.message_logit = None
+        self.message_logit = [None]*(shape[1])
         self.message_logits = []
-        self.message_entropy = None
+        self.message_entropy = [None]*(shape[1])
         self.message_entropies = []
         self.s_rewards = []  # reward at the end of the episode
-        self.replace_message = False
+        self.missions= []
+        self.replace_message = True
+        self.replace_message_indices = list(range(shape[1]))
         self.instructions = [None]*(shape[0])
 
         self.s_memory = torch.zeros(shape[1], self.speaker.memory_size, device=self.device)
@@ -154,27 +156,29 @@ class BaseECAlgo(ABC):
         self.message_logits = []
         self.message_entropies = []
         self.s_rewards = []
+        self.missions = []
 
         for i in range(self.num_frames_per_proc):
             # Do one agent-environment interaction
             # speaker's turn
-            if self.message is None or self.replace_message:
-                s_preprocessed_obs = self.s_preprocess_obss(self.obs, device=self.device)
+            if self.replace_message:
+                s_preprocessed_obs = self.s_preprocess_obss(self.obs, device=self.device, set_clear_cache=True)
                 model_results = self.speaker(s_preprocessed_obs, self.s_memory * self.s_mask.unsqueeze(1))
                 message = model_results['value']
                 logits = model_results['logits']
                 entropy = model_results['entropy']
 
-                self.message = message
-                # [dummy]
-                # self.message = torch.zeros_like(message)
+                for index in self.replace_message_indices:
+                    self.message[index] = message[index]
+                    self.message_logit[index] = logits[index]
+                    self.message_entropy[index] = entropy[index]
 
-                self.message_logit = logits
-                self.message_entropy = entropy
-                self.replace_message = False
+                assert not (None in self.message)
+                self.replace_message = None
+                self.replace_message_indices = []
 
             # listener's turn
-            l_preprocessed_obs = self.l_preprocess_obss(self.obs, self.message, device=self.device)
+            l_preprocessed_obs = self.l_preprocess_obss(self.obs, torch.stack(self.message), device=self.device)
             with torch.no_grad():
                 model_results = self.listener(l_preprocessed_obs, self.l_memory * self.l_mask.unsqueeze(1))
                 dist = model_results['dist']
@@ -198,7 +202,7 @@ class BaseECAlgo(ABC):
             self.l_masks[i] = self.l_mask
             self.l_mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
 
-            self.instructions[i] = self.message
+            self.instructions[i] = torch.stack(self.message)
             self.actions[i] = action
             self.values[i] = value
             if self.reshape_reward is not None:
@@ -226,17 +230,19 @@ class BaseECAlgo(ABC):
                     self.log_num_frames.append(self.log_episode_num_frames[j].item())
 
                     self.replace_message = True
+                    self.replace_message_indices.append(j)
                     self.messages.append(self.message[j])
                     self.message_logits.append(self.message_logit[j])
                     self.message_entropies.append(self.message_entropy[j])
                     self.s_rewards.append(self.rewards[i][j])
+                    self.missions.append(self.obss[i][j]['mission'])
 
             self.log_episode_return *= self.l_mask
             self.log_episode_reshaped_return *= self.l_mask
             self.log_episode_num_frames *= self.l_mask
 
         # Add advantage and return to experiences
-        l_preprocessed_obs = self.l_preprocess_obss(self.obs, self.message, device=self.device)
+        l_preprocessed_obs = self.l_preprocess_obss(self.obs, torch.stack(self.message), device=self.device)
         with torch.no_grad():
             next_value = self.listener(l_preprocessed_obs, self.l_memory * self.l_mask.unsqueeze(1))['value']
 
@@ -258,6 +264,7 @@ class BaseECAlgo(ABC):
             s_exps.message_logit = torch.stack(self.message_logits)
             s_exps.message_entropy = torch.stack(self.message_entropies)
             s_exps.s_reward = torch.stack(self.s_rewards)
+            s_exps.mission = self.missions
 
         l_exps = DictList()
         l_exps.obs = [
@@ -317,8 +324,7 @@ class PPOReinforceAlgo(BaseECAlgo):
                  discount=0.99, lr=7e-4, beta1=0.9, beta2=0.999, gae_lambda=0.95,
                  entropy_coef=0.01, value_loss_coef=0.5, max_grad_norm=0.5, recurrence=4,
                  adam_eps=1e-5, clip_eps=0.2, epochs=4, batch_size=256,
-                 s_preprocess_obss=None, l_preprocess_obss=None, reshape_reward=None, aux_info=None,
-                 s_lr=1e-3, s_entropy_coef=10, s_max_grad_norm=1):
+                 s_preprocess_obss=None, l_preprocess_obss=None, reshape_reward=None, aux_info=None):
         num_frames_per_proc = num_frames_per_proc or 128
 
         super().__init__(envs, speaker, listener,
@@ -326,24 +332,40 @@ class PPOReinforceAlgo(BaseECAlgo):
                          entropy_coef, value_loss_coef, max_grad_norm, recurrence,
                          s_preprocess_obss, l_preprocess_obss, reshape_reward, aux_info)
 
+        """
+        Listener parameters
+        """
         self.clip_eps = clip_eps
         self.epochs = epochs
         self.batch_size = batch_size
-
         assert self.batch_size % self.recurrence == 0
 
-        self.s_optimizer = torch.optim.Adam(self.speaker.parameters(), s_lr)
+        lr = 1e-5
         self.l_optimizer = torch.optim.Adam(self.listener.parameters(), lr, (beta1, beta2), eps=adam_eps)
+        
         self.batch_num = 0
 
+        """
+        Speaker parameters
+        """
+        # [adjust] Baseline type
         self.baselines = defaultdict(MeanBaseline)
-        self.length_cost = 0
-        self.s_entropy_coef = s_entropy_coef
-        self.s_max_grad_norm = s_max_grad_norm
+        # self.baselines = defaultdict(MissionMeanBaseline)
+        self.length_cost = 0  # 1 / max_len
+        self.s_entropy_coef = 1.0
+        
+        self.s_exps_buffer = DictList()
+        self._clear_s_exps_buffer()
+        
+        self.s_min_exps_buffer_size = 256
+        self.s_batch_size = 64
+        
+        self.s_lr = 1e-4
+        self.s_optimizer = torch.optim.Adam(self.speaker.parameters(), self.s_lr)
 
     def update_parameters(self):
+        
         # Collect experiences
-
         s_exps, l_exps, logs = self.collect_experiences()
         '''
         exps is a DictList with the following keys ['obs', 'memory', 'mask', 'action', 'value', 'reward',
@@ -357,61 +379,143 @@ class PPOReinforceAlgo(BaseECAlgo):
         being the added information. They are either (n_procs * n_frames_per_proc) 1D tensors or
         (n_procs * n_frames_per_proc) x k 2D tensors where k is the number of classes for multiclass classification
         '''
-        # update speaker
+        
+        """
+        Update speaker
+        """
         logs["s_policy_loss"] = numpy.nan
+        logs["s_policy_length_loss"] = numpy.nan
         logs["s_entropy"] = numpy.nan
         logs["s_optimized_loss"] = numpy.nan
         logs["s_grad_norm"] = numpy.nan
 
+        # add new experiences to buffer
         if s_exps.has_data:
-            message = s_exps.message
-            s_log_prob = s_exps.message_logit
-            s_entropy = s_exps.message_entropy
-            loss = -1 * s_exps.s_reward
+            self.s_exps_buffer.message.extend(s_exps.message)
+            self.s_exps_buffer.message_logit.extend(s_exps.message_logit)
+            self.s_exps_buffer.message_entropy.extend(s_exps.message_entropy)
+            self.s_exps_buffer.s_reward.extend(s_exps.s_reward)
+            self.s_exps_buffer.mission.extend(s_exps.mission)
+            self.s_exps_buffer.size += len(s_exps.message)
+            
+        # learn from buffer
+        if self.s_exps_buffer.size > self.s_min_exps_buffer_size:
+            message_buffer = self.s_exps_buffer.message
+            s_log_prob_buffer = self.s_exps_buffer.message_logit
+            s_entropy_buffer = self.s_exps_buffer.message_entropy
+            loss_buffer = [-1 * s_reward for s_reward in self.s_exps_buffer.s_reward]
+            mission_buffer = self.s_exps_buffer.mission
+            
+            recurrence = self.s_exps_buffer.size // self.s_batch_size
+            
+            logs["s_policy_loss"] = []
+            logs["s_policy_length_loss"] = []
+            logs["s_entropy"] = []
+            logs["s_optimized_loss"] = []
+            logs["s_grad_norm"] = []
+            for _ in range(self.epochs):
+                # randomly permute experiences
+                indexes = numpy.arange(0, self.s_exps_buffer.size)
+                indexes = numpy.random.permutation(indexes)
 
-            message_length = self._find_lengths(message)
-            length_loss = message_length.float() * self.length_cost
+                message_permuted = [message_buffer[i] for i in indexes]
+                s_log_prob_permuted = [s_log_prob_buffer[i] for i in indexes]
+                s_entropy_permuted = [s_entropy_buffer[i] for i in indexes]
+                loss_permuted = [loss_buffer[i] for i in indexes]
+                mission_permuted = [mission_buffer[i] for i in indexes]
 
-            # the entropy of the outputs of S before and including the eos symbol - as we don't care about what's after
-            s_effective_entropy = torch.zeros(s_entropy.size(0), device=self.device)
-            # the log prob of the choices made by S before and including the eos symbol - again, we don't
-            # care about the rest
-            s_effective_log_prob = torch.zeros(s_log_prob.size(0), device=self.device)
+                batch_policy_loss = 0
+                batch_policy_length_loss = 0
+                batch_entropy = 0
+                batch_loss = 0
+                batch_grad_norm = 0
+                # batch loop
+                for i in range(recurrence):
+                    # assign batch
+                    message = message_permuted[i * self.s_batch_size: min(self.s_exps_buffer.size, (i+1) * self.s_batch_size)]
+                    s_log_prob = s_log_prob_permuted[i * self.s_batch_size: min(self.s_exps_buffer.size, (i+1) * self.s_batch_size)]
+                    s_entropy = s_entropy_permuted[i * self.s_batch_size: min(self.s_exps_buffer.size, (i+1) * self.s_batch_size)]
+                    loss = loss_permuted[i * self.s_batch_size: min(self.s_exps_buffer.size, (i+1) * self.s_batch_size)]
+                    mission = mission_permuted[i * self.s_batch_size: min(self.s_exps_buffer.size, (i+1) * self.s_batch_size)]
 
-            for i in range(message.size(1)):
-                not_eosed = (i < message_length).float()
-                s_effective_entropy += s_entropy[:, i] * not_eosed
-                s_effective_log_prob += s_log_prob[:, i] * not_eosed
-            s_effective_entropy = s_effective_entropy / message_length.float()
-            s_effective_log_prob = s_effective_log_prob / message_length.float()
+                    # torch stack
+                    message = torch.stack(message)
+                    s_log_prob = torch.stack(s_log_prob)
+                    s_entropy = torch.stack(s_entropy)
+                    loss = torch.stack(loss)
 
-            policy_length_loss = ((length_loss - self.baselines['length'].predict(length_loss)) * s_effective_log_prob).mean()
-            policy_loss = ((loss.detach() - self.baselines['loss'].predict(loss.detach())) * s_effective_log_prob).mean()
-            weighted_entropy = self.s_entropy_coef * s_effective_entropy.mean()
+                    # fins message length
+                    message_length = self._find_lengths(message)
+                    length_loss = message_length.float() * self.length_cost
 
-            optimized_loss = policy_length_loss + policy_loss - weighted_entropy
-            """
-            # if the receiver is deterministic/differentiable, we apply the actual loss
-            optimized_loss += loss.mean()
-            """
-            # optimize
-            self.s_optimizer.zero_grad()
-            optimized_loss.backward()
-            grad_norm = sum(p.grad.data.norm(2) ** 2 for p in self.speaker.parameters() if p.grad is not None) ** 0.5
-            # torch.nn.utils.clip_grad_norm_(self.speaker.parameters(), self.s_max_grad_norm)
-            self.s_optimizer.step()
+                    # the entropy/log_prob of the outputs of S before and including the eos symbol 
+                    # - as we don't care about what's after
+                    s_effective_entropy = torch.zeros(s_entropy.size(0), device=self.device)
+                    s_effective_log_prob = torch.zeros(s_log_prob.size(0), device=self.device)
+                    for j in range(message.size(1)):
+                        not_eosed = (j < message_length).float()
+                        s_effective_entropy += s_entropy[:, j] * not_eosed
+                        s_effective_log_prob += s_log_prob[:, j] * not_eosed
+                    s_effective_entropy = s_effective_entropy / message_length.float()
 
-            # update baselines
-            self.baselines['loss'].update(loss)
-            self.baselines['length'].update(length_loss)
+                    # losses
+                    policy_length_loss = ((length_loss - self.baselines['length'].predict(loss)) * s_effective_log_prob).mean()
+                    policy_loss = ((loss.detach() - self.baselines['loss'].predict(loss)) * s_effective_log_prob).mean()
+                    """
+                    policy_length_loss = ((length_loss - self.baselines['length'].predict(mission, length_loss)) * s_effective_log_prob).mean()
+                    policy_loss = ((loss.detach() - self.baselines['loss'].predict(mission, loss.detach())) * s_effective_log_prob).mean()
+                    """
+                    weighted_entropy = self.s_entropy_coef * s_effective_entropy.mean()
 
-            # log some values
-            logs["s_policy_loss"] = policy_loss
-            logs["s_entropy"] = weighted_entropy
-            logs["s_optimized_loss"] = optimized_loss
-            logs["s_grad_norm"] = grad_norm.item()
+                    optimized_loss = policy_length_loss + policy_loss - weighted_entropy
 
-        # update listener
+                    # optimize
+                    self.s_optimizer.zero_grad()
+                    optimized_loss.backward(retain_graph=True)
+                    grad_norm = sum(p.grad.data.norm(2) ** 2 for p in self.speaker.parameters() if p.grad is not None) ** 0.5
+                    self.s_optimizer.step()
+
+                    # update baselines
+                    self.baselines['loss'].update(loss)
+                    self.baselines['length'].update(length_loss)
+                    """
+                    self.baselines['loss'].update(mission, loss)
+                    self.baselines['length'].update(mission, length_loss)
+                    """
+
+                    # update batch log
+                    batch_policy_loss += policy_loss.detach().cpu().numpy()
+                    batch_policy_length_loss += policy_length_loss.detach().cpu().numpy()
+                    batch_entropy += weighted_entropy.detach().cpu().numpy()
+                    batch_loss += optimized_loss.detach().cpu().numpy()
+                    batch_grad_norm += grad_norm.item()
+                    
+                # update epoch log
+                batch_policy_loss /= recurrence
+                batch_policy_length_loss /= recurrence
+                batch_entropy /= recurrence
+                batch_loss /= recurrence
+                batch_grad_norm /= recurrence
+                
+                logs["s_policy_loss"].append(batch_policy_loss)
+                logs["s_policy_length_loss"].append(batch_policy_length_loss)
+                logs["s_entropy"].append(batch_entropy)
+                logs["s_optimized_loss"].append(batch_loss)
+                logs["s_grad_norm"].append(batch_grad_norm)
+                    
+            # update log
+            logs["s_policy_loss"] = numpy.mean(logs["s_policy_loss"])
+            logs["s_policy_length_loss"] = numpy.mean(logs["s_policy_length_loss"])
+            logs["s_entropy"] = numpy.mean(logs["s_entropy"])
+            logs["s_optimized_loss"] = numpy.mean(logs["s_optimized_loss"])
+            logs["s_grad_norm"] = numpy.mean(logs["s_grad_norm"])
+            
+            # clear experience buffer
+            self._clear_s_exps_buffer()
+
+        """
+        Update listener
+        """
         for _ in range(self.epochs):
             # Initialize log values
             log_entropies = []
@@ -554,3 +658,12 @@ class PPOReinforceAlgo(BaseECAlgo):
         lengths.add_(1).clamp_(max=max_k)
 
         return lengths
+
+    def _clear_s_exps_buffer(self):
+        self.s_exps_buffer.message = []
+        self.s_exps_buffer.message_logit = []
+        self.s_exps_buffer.message_entropy = []
+        self.s_exps_buffer.s_reward = []
+        self.s_exps_buffer.mission = []
+        self.s_exps_buffer.size = 0
+    

@@ -34,8 +34,6 @@ def load_model(model_name, raise_not_found=True):
 def load_ec_model(model_name, raise_not_found=True):
     speaker_path = get_speaker_path(model_name)
     listener_path = get_listener_path(model_name)
-    # print("speaker_path: {}".format(speaker_path))
-    # print("listener_path: {}".format(speaker_path))
     try:
         speaker = torch.load(speaker_path)
         listener = torch.load(listener_path)

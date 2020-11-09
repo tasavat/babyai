@@ -49,6 +49,8 @@ parser.add_argument("--ppo-epochs", type=int, default=4,
                     help="number of epochs for PPO (default: 4)")
 parser.add_argument("--save-interval", type=int, default=50,
                     help="number of updates between two saves (default: 50, 0 means no saving)")
+parser.add_argument("--episodes", type=int, default=3000000,
+                    help="number of training episodes")
 args = parser.parse_args()
 
 utils.seed(args.seed)
@@ -59,7 +61,6 @@ def main():
     envs = []
     for i in range(args.procs):
         env = gym.make(args.env)
-        # [adjust]
         # env = utils.FullyObsWrapper(env)
         env.seed(100 * args.seed + i)
         envs.append(env)
@@ -101,14 +102,14 @@ def main():
             acmodel = utils.load_model(args.pretrained_model, raise_not_found=True)
         else:
             # [adjust]
-            # acmodel = ACModel(obss_preprocessor.obs_space, envs[0].action_space,
-            #                   args.image_dim, args.memory_dim, args.instr_dim,
-            #                   not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
+#             acmodel = ACModel(obss_preprocessor.obs_space, envs[0].action_space,
+#                               args.image_dim, args.memory_dim, args.instr_dim,
+#                               not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
             acmodel = ACModelImgInstr(obss_preprocessor.obs_space, envs[0].action_space,
                                       args.image_dim, args.memory_dim, args.instr_dim,
                                       not args.no_instr, not args.no_mem, args.arch)
     # [adjust]
-    # obss_preprocessor.vocab.save()
+    #obss_preprocessor.vocab.save()
     utils.save_model(acmodel, args.model)
 
     if torch.cuda.is_available():
@@ -189,7 +190,12 @@ def main():
     best_success_rate = 0
     best_mean_return = 0
     test_env_name = args.env
-    while status['num_frames'] < args.frames:
+    
+    consecutive_success = 0
+    success_rate_criteria = 0.99
+
+    # [adjust]
+    while (status['num_episodes'] < args.episodes) and (consecutive_success < 3):
         # Update parameters
         update_start_time = time.time()
         logs = algo.update_parameters()
@@ -228,17 +234,22 @@ def main():
                     writer.add_scalar(key, float(value), status['num_frames'])
 
             csv_writer.writerow(data)
+            
+        # update consecutive success
+        success_per_episode = utils.synthesize([1 if r > 0 else 0 for r in logs["return_per_episode"]])
+        if success_per_episode['mean'] >= success_rate_criteria:
+            consecutive_success += 1
+        else:
+            consecutive_success = 0
 
         # Save obss preprocessor vocabulary and model
-
         if args.save_interval > 0 and status['i'] % args.save_interval == 0:
             # [adjust]
-            # obss_preprocessor.vocab.save()
+            #obss_preprocessor.vocab.save()
             with open(status_path, 'w') as dst:
                 json.dump(status, dst)
                 utils.save_model(acmodel, args.model)
 
-            """
             # Testing the model before saving
             agent = ModelAgent(args.model, obss_preprocessor, argmax=True)
             agent.model = acmodel
@@ -257,11 +268,10 @@ def main():
             if save_model:
                 utils.save_model(acmodel, args.model + '_best')
                 # [adjust]
-                # obss_preprocessor.vocab.save(utils.get_vocab_path(args.model + '_best'))
+                #obss_preprocessor.vocab.save(utils.get_vocab_path(args.model + '_best'))
                 logger.info("Return {: .2f}; best model is saved".format(mean_return))
             else:
                 logger.info("Return {: .2f}; not the best model; not saved".format(mean_return))
-            """
 
 
 if __name__ == "__main__":

@@ -120,11 +120,13 @@ class ImgInstrPreprocessor(object):
     def __init__(self, model_name, obs_space=None):
         self.img_instr_dict = ImageInstructionDict()
         self.clear_cache_id = set()
+        """
         self.simulated_env = get_simulated_env(model_name)
         self.simulated_obs = None
         self.obss_preprocessor = get_preprocessed_obs(model_name, obs_space)
         self.pretrained_agent = get_pretrained_agent(model_name)
         self.pretrained_agent.eval()
+        """
 
     def __call__(self, obss, device=None, set_clear_cache=False):
         cache_id_set = set()
@@ -137,9 +139,9 @@ class ImgInstrPreprocessor(object):
                 img_instr = self.img_instr_dict[cache_id]
             # generate new image instruction with pretrained agent
             else:
-                # [adjust]
-                img_instr = self._generate_img_instr(obs, device=device)
-                # img_instr = self._load_prerendered_img_instr(obs, device=device)
+                # [adjust] method to generate image instruction
+                # img_instr = self._generate_img_instr(obs, device=device)
+                img_instr = self._load_prerendered_img_instr(obs, device=device)
                 self.img_instr_dict[cache_id] = img_instr
             img_instrs.append(img_instr)
             
@@ -170,7 +172,6 @@ class ImgInstrPreprocessor(object):
         # one-hot encoding
         full_obs_oh = numpy.zeros((full_obs.shape[0], full_obs.shape[1], 21))
         channel_start_index = {0: 0, 1:11, 2:17}
-        
         for x in range(full_obs.shape[0]):
             for y in range(full_obs.shape[1]):
                 for ch in range(full_obs.shape[2]):
@@ -223,23 +224,20 @@ class ImgInstrPreprocessor(object):
         return img_instr
 
     def _load_prerendered_img_instr(self, obs, device=None):
+        """select from pre-rendered images"""
         mission = obs["mission"]
-        random_index = numpy.random.randint(1, 100)
+        random_index = numpy.random.randint(1, 30)
         img_instr = numpy.load(f"instruction_images/{mission}/{random_index}.npy")
         img_instr = torch.tensor(img_instr, device=device, dtype=torch.float)
-        return img_instr
-        
+        return img_instr        
     
     
 class RawImagePreprocessor(object):
-    def __init__(self, grid_type=None):
-        self.grid_type = grid_type
+    def __init__(self):
+        pass
 
     def __call__(self, obss, device=None):
-        if self.grid_type is None:
-            images = numpy.array([obs["image"] for obs in obss])
-        else:
-            images = numpy.array([obs[f"image_{self.grid_type}"] for obs in obss])
+        images = numpy.array([obs["image"] for obs in obss])
         images = torch.tensor(images, device=device, dtype=torch.float)
         return images
 
@@ -265,16 +263,14 @@ class ObssPreprocessor:
         self.instr_preproc = InstructionsPreprocessor(model_name, load_vocab_from)
         self.vocab = self.instr_preproc.vocab
         self.obs_space = {
-            "image": 147,
+            "image": 7*7*3,
             "instr": self.vocab.max_size
         }
 
     def __call__(self, obss, device=None):
         obs_ = babyai.rl.DictList()
-
         if "image" in self.obs_space.keys():
             obs_.image = self.image_preproc(obss, device=device)
-
         if "instr" in self.obs_space.keys():
             obs_.instr = self.instr_preproc(obss, device=device)
 
@@ -295,10 +291,8 @@ class IntObssPreprocessor(object):
 
     def __call__(self, obss, device=None):
         obs_ = babyai.rl.DictList()
-
         if "image" in self.obs_space.keys():
             obs_.image = self.image_preproc(obss, device=device)
-
         if "instr" in self.obs_space.keys():
             obs_.instr = self.instr_preproc(obss, device=device)
 
@@ -306,20 +300,18 @@ class IntObssPreprocessor(object):
 
 
 class ImgInstrObssPreprocessor(object):
-    def __init__(self, model_name, obs_space=None, load_vocab_from=None, grid_type=None):
-        self.image_preproc = RawImagePreprocessor(grid_type=grid_type)
+    def __init__(self, model_name, obs_space=None, load_vocab_from=None):
+        self.image_preproc = RawImagePreprocessor()
         self.instr_preproc = ImgInstrPreprocessor(model_name, obs_space)
         self.obs_space = {
-            "image": 8*8*3 if grid_type == 'full' else 7*7*3,
+            "image": 7*7*3,
             "instr": 100,
         }
 
     def __call__(self, obss, device=None, set_clear_cache=False):
         obs_ = babyai.rl.DictList()
-
         if "image" in self.obs_space.keys():
             obs_.image = self.image_preproc(obss, device=device)
-
         if "instr" in self.obs_space.keys():
             obs_.instr = self.instr_preproc(obss, device=device, set_clear_cache=set_clear_cache)
 
@@ -327,24 +319,22 @@ class ImgInstrObssPreprocessor(object):
 
 
 class SpeakerObssPreprocessor(ImgInstrObssPreprocessor):
-    def __init__(self, model_name, grid_type=None):
-        super().__init__(model_name, grid_type=grid_type)
+    def __init__(self, model_name):
+        super().__init__(model_name)
 
 
 class ListenerObssPreprocessor(object):
-    def __init__(self, model_name, grid_type=None):
-        self.image_preproc = RawImagePreprocessor(grid_type=grid_type)
+    def __init__(self, model_name):
+        self.image_preproc = RawImagePreprocessor()
         self.obs_space = {
-            "image": 8*8*3 if grid_type == 'full' else 7*7*3,
+            "image": 7*7*3,
             "instr": 100,
         }
 
     def __call__(self, obss, messages=None, device=None):
         obs_ = babyai.rl.DictList()
-
         if "image" in self.obs_space.keys():
             obs_.image = self.image_preproc(obss, device=device)
-
         if "instr" in self.obs_space.keys():
             # replace instruction with speaker's message
             if messages is not None:

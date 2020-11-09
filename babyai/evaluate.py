@@ -1,6 +1,7 @@
 import numpy as np
 import gym
 
+import babyai.utils as utils
 
 # Returns the performance of the agent on the environment for a particular number of episodes.
 def evaluate(agent, env, episodes, model_agent=True, offsets=None):
@@ -87,6 +88,7 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False):
     envs = []
     for i in range(num_envs):
         env = gym.make(env_name)
+        # env = utils.FullyObsWrapper(env)
         envs.append(env)
     env = ManyEnvs(envs)
 

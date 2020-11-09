@@ -6,7 +6,7 @@ from torch.distributions.categorical import Categorical
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import babyai.rl
 from babyai.rl.utils.supervised_losses import required_heads
-from babyai.utils.model import load_model
+from babyai.utils.model import load_model, load_ec_model
 
 
 # Function from https://github.com/ikostrikov/pytorch-a2c-ppo-acktr/blob/master/model.py
@@ -355,26 +355,6 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
 
         # Define instruction embedding
         if self.use_instr:
-            # [adjust] for RGB image
-            """
-            self.instr_cnn = nn.Sequential(
-                nn.Conv2d(in_channels=3, out_channels=16, kernel_size=(3, 3)),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
-                nn.Conv2d(in_channels=16, out_channels=32, kernel_size=(2, 2)),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
-                nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(2, 2)),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
-                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(2, 2)),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
-                nn.Flatten(),
-                nn.Linear(128*3*3, instr_dim),
-            )
-            """
-            # [adjust] for grid encoding
             self.instr_cnn = nn.Sequential(
                 nn.Conv2d(in_channels=21, out_channels=128, kernel_size=(2, 2)),
                 nn.ReLU(),
@@ -388,6 +368,22 @@ class ACModelImgInstr(nn.Module, babyai.rl.RecurrentACModel):
                 nn.Flatten(),
                 nn.Linear(128, instr_dim),
             )
+            """
+            self.instr_cnn = nn.Sequential(
+                nn.Conv2d(in_channels=21, out_channels=256, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=(2, 2), stride=2),
+                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(2, 2)),
+                nn.ReLU(),
+                nn.Flatten(),
+                nn.Linear(256, instr_dim),
+            )
+            """
+            
             self.instr_rnn = nn.GRU(image_dim, instr_dim, batch_first=True)
             self.final_instr_dim = self.instr_dim
 
@@ -545,27 +541,39 @@ class SpeakerModel(ACModelImgInstr):
     def __init__(self, obs_space, action_space,
                  image_dim=128, memory_dim=128, instr_dim=128,
                  use_instr=True, use_memory=False, arch="cnn1", aux_info=None,
-                 vocab_size=None, max_len=None, instr_gru_num_layers=2, force_eos=True,
-                 pretrained_model_path=None
-                 ):
+                 vocab_size=None, max_len=None, 
+                 instr_gru_num_layers=2, instr_gru_input_size=128,
+                 force_eos=True,
+                 pretrained_model_path=None,
+                 pretrained_model_EC_path=None):
         super().__init__(obs_space, action_space,
                          image_dim=image_dim, memory_dim=memory_dim, instr_dim=instr_dim,
                          use_instr=use_instr, use_memory=False, arch=arch, aux_info=aux_info)
+        """
+        remove unnecessary layers
+        """
         # remove actor-critic heads
         self.actor = None
         self.critic = None
+        # remove observation input
+        self.image_conv = None
+        self.film_pool = None
+        self.FiLM_Controler_0 = None
+        self.FiLM_Controler_1 = None
 
-        # update state
+        """
+        update pretrained models
+        """
+        # update pretrained model state
         if pretrained_model_path:
+            print(f"update speaker pretrained state: {pretrained_model_path}")
             self.load_pretrained_state(pretrained_model_path)
-            print(f"update pretrained state: {pretrained_model_path}")
-
         # inject instruction generator module
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.force_eos = force_eos
         self.instr_gru_num_layers = instr_gru_num_layers
-        self.instr_gru_hidden_size = instr_dim
+        self.instr_gru_hidden_size = instr_gru_input_size
         self.instr_gru = nn.ModuleList([
             nn.GRUCell(input_size=self.embedding_size, hidden_size=self.instr_gru_hidden_size)
             if i == 0 else
@@ -576,52 +584,59 @@ class SpeakerModel(ACModelImgInstr):
         self.vocab_embedding = nn.Embedding(vocab_size, self.embedding_size)
         self.sos_embedding = nn.Parameter(torch.zeros(self.embedding_size), requires_grad=False)
         self.reset_sos_embeddings()
-
-    def reset_sos_embeddings(self):
-        nn.init.normal_(self.sos_embedding, 0.0, 0.01)
+        # update pretrained EC model state
+        if pretrained_model_EC_path:
+            print(f"update speaker pretrained EC state: {pretrained_model_EC_path}")
+            self.load_pretrained_EC_state(pretrained_model_EC_path)          
+        # freeze layers
+        freeze_layers = {'instr_cnn', 'instr_rnn'}
+        self.freeze(freeze_layers)
 
     def load_pretrained_state(self, pretrained_model_path):
+        """update pretrained model state"""
         pretrained_model = load_model(pretrained_model_path, raise_not_found=True)
-        pretrained_dict = pretrained_model.state_dict()
-        model_dict = self.state_dict()
+        pretrained_dict = pretrained_model.state_dict()        
         # update only relevant state
-        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict.keys()}
+        update_set = {'instr_cnn', 'instr_rnn'}
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if any(l in k  for l in update_set)}
+        model_dict = self.state_dict()
         model_dict.update(pretrained_dict)
         self.load_state_dict(model_dict)
+        
+    def load_pretrained_EC_state(self, pretrained_model_EC_path):
+        """update pretrained EC module"""
+        pretrained_model, _ = load_ec_model(pretrained_model_EC_path, raise_not_found=True)
+        pretrained_dict = pretrained_model.state_dict()        
+        # update only relevant state
+        update_set = {'instr_gru', 'hidden_to_output', 'vocab_embedding'}
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if any(l in k for l in update_set)}
+        model_dict = self.state_dict()
+        model_dict.update(pretrained_dict)
+        self.load_state_dict(model_dict)
+        
+    def freeze(self, layers):
+        for name, param in self.named_parameters():
+            if any([layer in name for layer in layers])\
+            and param.requires_grad:
+                print(f'Speaker model: freeze {name}')
+                param.requires_grad = False
+    
+    def unfreeze(self, layers):
+        for name, param in self.named_parameters():
+            if any([layer in name for layer in layers])\
+            and not param.requires_grad:
+                print(f'Speaker model: unfreeze {name}')
+                param.requires_grad = True
+        
+    def reset_sos_embeddings(self):
+        nn.init.normal_(self.sos_embedding, 0.0, 0.01)
 
     def forward(self, obs, memory, instr_embedding=None):
         if self.use_instr and instr_embedding is None:
             instr = torch.transpose(torch.transpose(obs.instr, 2, 4), 3, 4)
             instr_embedding = self._get_instr_embedding(instr, inject_dummy=False)
-
-        x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
-
-        if self.arch.startswith("expert_filmcnn"):
-            x = self.image_conv(x)
-            for controller in self.controllers:
-                x = controller(x, instr_embedding)
-            x = F.relu(self.film_pool(x))
-        else:
-            x = self.image_conv(x)
-
-        x = x.reshape(x.shape[0], -1)
-
-        if self.use_memory:
-            hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
-            hidden = self.memory_rnn(x, hidden)
-            embedding = hidden[0]
-            memory = torch.cat(hidden, dim=1)
-        else:
-            embedding = x
-
-        if self.use_instr and not "filmcnn" in self.arch:
-            embedding = torch.cat((embedding, instr_embedding), dim=1)
-
-        if hasattr(self, 'aux_info') and self.aux_info:
-            extra_predictions = {info: self.extra_heads[info](embedding) for info in self.extra_heads}
-        else:
-            extra_predictions = dict()
-
+        embedding = instr_embedding
+        
         # instruction gru
         prev_hidden = [embedding]
         prev_hidden.extend([torch.zeros_like(prev_hidden[0]) for _ in range(self.instr_gru_num_layers - 1)])
@@ -630,33 +645,31 @@ class SpeakerModel(ACModelImgInstr):
         sequence = []
         logits = []
         entropy = []
-
         for step in range(self.max_len):
             for i, layer in enumerate(self.instr_gru):
                 h_t = layer(input, prev_hidden[i])
                 prev_hidden[i] = h_t
                 input = h_t
-
             step_logits = F.log_softmax(self.hidden_to_output(h_t), dim=1)
             distr = Categorical(logits=step_logits)
             entropy.append(distr.entropy())
-
             if self.training:
                 x = distr.sample()
             else:
                 x = step_logits.argmax(dim=1)
             logits.append(distr.log_prob(x))
-
             input = self.vocab_embedding(x)
             sequence.append(x)
 
         sequence = torch.stack(sequence).permute(1, 0)
         logits = torch.stack(logits).permute(1, 0)
         entropy = torch.stack(entropy).permute(1, 0)
+        
+        # [adjust] zero-seqeunce
+        # sequence = torch.zeros_like(sequence)
 
         if self.force_eos:
             zeros = torch.zeros((sequence.size(0), 1)).to(sequence.device)
-
             sequence = torch.cat([sequence, zeros.long()], dim=1)
             logits = torch.cat([logits, zeros], dim=1)
             entropy = torch.cat([entropy, zeros], dim=1)
@@ -667,19 +680,71 @@ class SpeakerModel(ACModelImgInstr):
         lengths = max_k - (zero_mask.cumsum(dim=1) > 0).sum(dim=1)
         lengths.add_(1).clamp_(max=max_k)
         not_eosed = torch.stack([(i < lengths).float() for i in range(max_k)], dim=1).type('torch.cuda.LongTensor')
-
         sequence = sequence * not_eosed
 
         return {'logits': logits, 'value': sequence, 'entropy': entropy,
-                'memory': memory, 'extra_predictions': extra_predictions}
+                'memory': memory, 'extra_predictions': {'embedding': embedding}}
 
 
 class ListenerModel(ACModel):
     def __init__(self, obs_space, action_space,
                  image_dim=128, memory_dim=128, instr_dim=128,
                  use_instr=False, lang_model="gru", use_memory=False,
-                 arch="cnn1", aux_info=None):
+                 arch="cnn1", aux_info=None,
+                 pretrained_model_path=None,
+                 pretrained_model_EC_path=None):
+        
         super().__init__(obs_space, action_space,
                          image_dim=image_dim, memory_dim=memory_dim, instr_dim=instr_dim,
                          use_instr=use_instr, lang_model=lang_model, use_memory=use_memory,
                          arch=arch, aux_info=aux_info)
+        """
+        update pretrained models
+        """
+        # update pretrained model state
+        if pretrained_model_path:
+            self.load_pretrained_state(pretrained_model_path)
+            print(f"update listener pretrained state: {pretrained_model_path}")
+        # update pretrained EC model state
+        if pretrained_model_EC_path:
+            print(f"update listener pretrained EC state: {pretrained_model_EC_path}")
+            self.load_pretrained_EC_state(pretrained_model_EC_path)     
+        # freeze layers
+        freeze_layers = {'image_conv', 'film_pool', 'memory_rnn', 'FiLM_Controler', 'actor', 'critic'}
+        self.freeze(freeze_layers)
+
+    def load_pretrained_state(self, pretrained_model_path):
+        pretrained_model = load_model(pretrained_model_path, raise_not_found=True)
+        pretrained_dict = pretrained_model.state_dict()
+        model_dict = self.state_dict()
+        # update only relevant state
+        update_set = {'word_embedding', 'instr_rnn', 'memory_rnn', 
+                      'image_conv', 'film_pool', 'memory_rnn', 'FiLM_Controler', 'actor', 'critic'}
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if any(l in k for l in update_set)}
+        model_dict.update(pretrained_dict)
+        self.load_state_dict(model_dict)
+        
+    def load_pretrained_EC_state(self, pretrained_model_EC_path):
+        """update pretrained EC module"""
+        _, pretrained_model = load_ec_model(pretrained_model_EC_path, raise_not_found=True)
+        pretrained_dict = pretrained_model.state_dict()
+        # update only relevant state
+        update_set = {'word_embedding', 'instr_rnn', 'memory_rnn'}
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if any(l in k for l in update_set)}
+        model_dict = self.state_dict()
+        model_dict.update(pretrained_dict)
+        self.load_state_dict(model_dict)
+
+    def freeze(self, layers):
+        for name, param in self.named_parameters():
+            if any([layer in name for layer in layers])\
+            and param.requires_grad:
+                print(f'Listener model: freeze {name}')
+                param.requires_grad = False
+    
+    def unfreeze(self, layers):
+        for name, param in self.named_parameters():
+            if any([layer in name for layer in layers])\
+            and not param.requires_grad:
+                print(f'Listener model: unfreeze {name}')
+                param.requires_grad = True

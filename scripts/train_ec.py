@@ -42,34 +42,33 @@ parser.add_argument("--ppo-epochs", type=int, default=4,
                     help="number of epochs for PPO (default: 4)")
 parser.add_argument("--save-interval", type=int, default=50,
                     help="number of updates between two saves (default: 50, 0 means no saving)")
-parser.add_argument("--vocab_size", type=int, default=5,
-                    help="size of vocabulary (default: 5)")
+parser.add_argument("--vocab_size", type=int, default=10,
+                    help="size of vocabulary (default: 10)")
 parser.add_argument("--max_len", type=int, default=5,
                     help="message's maximum length(default: 5)")
 parser.add_argument("--suffix", type=str, default=None,
                     help="suffix to model's name (default: None)")
 parser.add_argument("--speaker_pretrained_model", type=str, default=None,
                     help="path to speaker pretrained model (default: None)")
-parser.add_argument("--speaker_grid_type", type=str, default="partial",
-                    help="grid type: 'full' or 'partial' (default: partial)")
-parser.add_argument("--listener_grid_type", type=str, default="partial",
-                    help="grid type: 'full' or 'partial' (default: partial)")
-parser.add_argument("--episodes", type=int, default=1000000,
-                    help="number of training episodes (default: 1000k)")
+parser.add_argument("--speaker_pretrained_EC_model", type=str, default=None,
+                    help="path to speaker pretrained EC model (default: None)")
+parser.add_argument("--listener_pretrained_model", type=str, default=None,
+                    help="path to speaker pretrained model (default: None)")
+parser.add_argument("--listener_pretrained_EC_model", type=str, default=None,
+                    help="path to speaker pretrained model (default: None)")
+parser.add_argument("--episodes", type=int, default=100000,
+                    help="number of training episodes")
 args = parser.parse_args()
 
 utils.seed(args.seed)
 
 
 def main():
-    # check environment names
-    env_names = args.env.split("_")
-    env_num = len(env_names)
     # Generate environments
     envs = []
     for i in range(args.procs):
-        env = gym.make(env_names[i // (args.procs//env_num)])
-        env = utils.FullyObsWrapper(env)
+        env = gym.make(args.env)
+        # env = utils.FullyObsWrapper(env)
         env.seed(100 * args.seed + i)
         envs.append(env)
 
@@ -99,11 +98,12 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Define obss preprocessor
-    speaker_obss_preprocessor = utils.SpeakerObssPreprocessor(args.model, grid_type=args.speaker_grid_type)
-    listener_obss_preprocessor = utils.ListenerObssPreprocessor(args.model, grid_type=args.listener_grid_type)
+    speaker_obss_preprocessor = utils.SpeakerObssPreprocessor(args.model)
+    listener_obss_preprocessor = utils.ListenerObssPreprocessor(args.model)
 
     # Define actor-critic model
     speaker, listener = utils.load_ec_model(args.model, raise_not_found=False)
+    
     if speaker is None:
         if args.pretrained_model:
             speaker, listener = utils.load_ec_model(args.pretrained_model, raise_not_found=True)
@@ -112,11 +112,14 @@ def main():
                                    args.image_dim, args.memory_dim, args.instr_dim,
                                    not args.no_instr, not args.no_mem, args.arch,
                                    vocab_size=args.vocab_size, max_len=args.max_len,
-                                   pretrained_model_path=args.speaker_pretrained_model)
+                                   pretrained_model_path=args.speaker_pretrained_model,
+                                   pretrained_model_EC_path=args.speaker_pretrained_EC_model)
             listener = ListenerModel(listener_obss_preprocessor.obs_space, envs[0].action_space,
                                      args.image_dim, args.memory_dim, args.instr_dim,
-                                     not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
-
+                                     not args.no_instr, args.instr_arch, not args.no_mem, args.arch,
+                                     pretrained_model_path=args.listener_pretrained_model,
+                                     pretrained_model_EC_path=args.listener_pretrained_EC_model)
+    
     utils.save_ec_model(speaker, listener, args.model)
 
     if torch.cuda.is_available():
@@ -153,7 +156,7 @@ def main():
               + ["success_rate"]
               + ["num_frames_" + stat for stat in ['mean', 'std', 'min', 'max']]
               + ["entropy", "value", "policy_loss", "value_loss", "loss", "grad_norm"]
-              + ["s_policy_loss", "s_entropy", "s_loss", "s_grad_norm"])
+              + ["s_policy_loss", "s_policy_length_loss", "s_entropy", "s_loss", "s_grad_norm"])
     if args.tb:
         from tensorboardX import SummaryWriter
         writer = SummaryWriter(utils.get_log_dir(args.model))
@@ -195,11 +198,10 @@ def main():
     test_env_name = args.env
 
     consecutive_success = 0
-    success_rate_criteria = 0.95
+    success_rate_criteria = 0.90
 
-    # [adjust]
-    while consecutive_success < 3:
-    # while (status['num_episodes'] < args.episodes) and (consecutive_success < 3):
+    # [adjust] training stop condition
+    while (status['num_episodes'] < args.episodes) and (consecutive_success < 3):
         # Update parameters
         update_start_time = time.time()
         logs = algo.update_parameters()
@@ -226,13 +228,13 @@ def main():
                     *num_frames_per_episode.values(),
                     logs["entropy"], logs["value"], logs["policy_loss"], logs["value_loss"],
                     logs["loss"], logs["grad_norm"],
-                    logs["s_policy_loss"], logs["s_entropy"], logs["s_optimized_loss"], logs["s_grad_norm"]
+                    logs["s_policy_loss"], logs["s_policy_length_loss"], logs["s_entropy"], logs["s_optimized_loss"], logs["s_grad_norm"]
                     ]
 
             format_str = ("U {} | E {} | F {:06} | FPS {:04.0f} | D {} | R:xsmM {: .2f} {: .2f} {: .2f} {: .2f} | "
                           "S {:.2f} | F:xsmM {:.1f} {:.1f} {} {} | H {:.3f} | V {:.3f} | "
                           "pL {:.3f} | vL {:.3f} | L {:.3f} | gN {:.3f} | "
-                          "s_pL {:.3f} | s_H {:.3f} | s_L {:.3f} | s_gN {:.3f} | ")
+                          "s_pL {:.3f} | s_pLL {:.3f} | s_H {:.3f} | s_L {:.3f} | s_gN {:.3f} | ")
 
             logger.info(format_str.format(*data))
             if args.tb:

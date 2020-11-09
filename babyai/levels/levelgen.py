@@ -34,6 +34,7 @@ class RoomGridLevel(RoomGrid):
         )
 
         self.id = self.generate_unique_id()
+        self.penalty = 0
 
     def reset(self, **kwargs):
         obs = super().reset(**kwargs)
@@ -44,6 +45,9 @@ class RoomGridLevel(RoomGrid):
         # Reset id
         self.id = self.generate_unique_id()
         obs['id'] = self.id
+        
+        # Penalty system
+        self.penalty = 0
 
         # Compute the time step limit based on the maze size and instructions
         nav_time_room = self.room_size ** 2
@@ -66,11 +70,12 @@ class RoomGridLevel(RoomGrid):
 
         if status == 'success':
             done = True
-            reward = self._reward()
+            reward = self._reward() - self.penalty
         elif status == 'failure':
             done = True
             reward = 0
-
+        elif status == 'continue_with_penalty':
+            self.penalty += 0.125
         return obs, reward, done, info
 
     def update_objs_poss(self, instr=None):
